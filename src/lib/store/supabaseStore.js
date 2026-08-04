@@ -61,11 +61,12 @@ export class SupabaseStore {
         subtotal: d.subtotal, tax: d.tax, total: d.total, sent_at: new Date().toISOString(),
       }).select().single());
       ok(await this.sb.from('po_lines').insert(d.lines.map((l) => ({ po_id: po.id, ...l }))));
-      const boxes = d.lines.flatMap((l) =>
+      // fee lines (packing charges) are not physical goods — no boxes for them
+      const boxes = d.lines.filter((l) => l.kind !== 'fee' && l.product_id).flatMap((l) =>
         Array.from({ length: l.qty }, () => ({
           hall_id: hallId, product_id: l.product_id, po_id: po.id, cost: l.cost, state: 'on_order',
         })));
-      ok(await this.sb.from('boxes').insert(boxes));
+      if (boxes.length) ok(await this.sb.from('boxes').insert(boxes));
       created.push(po);
     }
     return created;

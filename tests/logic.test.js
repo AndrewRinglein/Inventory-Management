@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { poTotals, nextPoNum, buildDrafts, lineName, round2 } from '../src/lib/logic/po.js';
+import { poTotals, nextPoNum, buildDrafts, lineName, round2, packingLine } from '../src/lib/logic/po.js';
 import { canTransition, transition, countByProduct } from '../src/lib/logic/boxes.js';
 import { resolveScan } from '../src/lib/logic/scan.js';
 import { buildOrderEmails, buildDeliveredEmail, buildShortageEmail } from '../src/lib/logic/emails.js';
@@ -53,6 +53,51 @@ test('buildDrafts groups by vendor, skips zero qty, locks prices', () => {
   assert.equal(bv.lines.length, 1);
   assert.equal(bv.lines[0].cost, 117.3);
   assert.equal(bv.subtotal, 234.6);
+});
+
+// ---------- per-vendor packing charge ----------
+const bvFee = { id: 'bv', name: 'Bingo Vision', email: 'bv@x.com', contact_name: 'Scott', tax_rate: 0.0975, packing_fee: 4, packing_types: 'flash' };
+const vendorsFee = [bvFee, { id: 'md', name: 'Marathon', email: 'md@x.com', tax_rate: 0.0975 }];
+
+test('Bingo Vision flash order adds $4/box packing as a fee line', () => {
+  const [d] = buildDrafts({ P1: 2, P2: 3 }, products, vendorsFee);   // both bv flash
+  const fee = d.lines.find((l) => l.kind === 'fee');
+  assert.ok(fee, 'packing line missing');
+  assert.equal(fee.qty, 5, 'one packing charge per box of flash');
+  assert.equal(fee.cost, 4);
+  assert.equal(fee.product_id, null, 'fee lines are not products');
+  assert.match(fee.name_snapshot, /Packing/);
+});
+
+test('packing is included in subtotal, tax and total', () => {
+  const [d] = buildDrafts({ P1: 2 }, products, vendorsFee);          // 2 x 117.30 = 234.60 + 8 packing
+  assert.equal(d.subtotal, 242.60);
+  assert.equal(d.total, round2(242.60 * 1.0975));
+});
+
+test('other vendors get no packing charge', () => {
+  const drafts = buildDrafts({ P3: 4 }, products, vendorsFee);       // Marathon flash
+  assert.ok(!drafts[0].lines.some((l) => l.kind === 'fee'));
+});
+
+test('no packing when nothing of the charged type is ordered', () => {
+  const nonFlash = [{ id: 'S1', vendor_id: 'bv', name: 'Strip Pack', cost: 60, tickets: null, price_per_ticket: 1, type: 'strip' }];
+  const drafts = buildDrafts({ S1: 3 }, nonFlash, vendorsFee);
+  assert.ok(!drafts[0].lines.some((l) => l.kind === 'fee'), 'strips should not be charged packing');
+});
+
+test('packing counts only the charged types in a mixed order', () => {
+  const mixed = [
+    { id: 'F1', vendor_id: 'bv', name: 'Flash A', cost: 100, type: 'flash', price_per_ticket: 1 },
+    { id: 'S1', vendor_id: 'bv', name: 'Strip A', cost: 50, type: 'strip', price_per_ticket: 1 },
+  ];
+  const [d] = buildDrafts({ F1: 3, S1: 5 }, mixed, vendorsFee);
+  assert.equal(d.lines.find((l) => l.kind === 'fee').qty, 3, 'only flash boxes counted');
+});
+
+test('packingLine returns null for a vendor with no fee configured', () => {
+  assert.equal(packingLine({ packing_fee: 0 }, [{ qty: 2, _type: 'flash' }]), null);
+  assert.equal(packingLine({}, [{ qty: 2, _type: 'flash' }]), null);
 });
 
 test('lineName includes tickets/price only when known', () => {

@@ -1,6 +1,6 @@
 import React, { useContext, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
-import { fmtMoney } from '../lib/logic/po.js';
+import { fmtMoney, buildDrafts } from '../lib/logic/po.js';
 import { countByProduct } from '../lib/logic/boxes.js';
 
 export default function Purchase() {
@@ -12,14 +12,11 @@ export default function Purchase() {
   const cnt = useMemo(() => countByProduct(boxes), [boxes]);
   const vmap = useMemo(() => Object.fromEntries(vendors.map((v) => [v.id, v])), [vendors]);
 
-  let grand = 0, lineCount = 0;
-  for (const [pid, n] of Object.entries(orderQty)) {
-    if (!(n > 0)) continue;
-    const p = products.find((x) => x.id === pid);
-    if (!p) continue;
-    lineCount++;
-    grand += n * p.cost * (1 + (vmap[p.vendor_id]?.tax_rate || 0));
-  }
+  // use the same builder the PO uses, so packing charges are in the running total
+  const drafts = useMemo(() => buildDrafts(orderQty, products, vendors), [orderQty, products, vendors]);
+  const grand = drafts.reduce((a, d) => a + d.total, 0);
+  const lineCount = drafts.reduce((a, d) => a + d.lines.filter((l) => l.kind !== 'fee').length, 0);
+  const feeTotal = drafts.reduce((a, d) => a + d.lines.filter((l) => l.kind === 'fee').reduce((x, l) => x + l.qty * l.cost, 0), 0);
 
   const rows = products
     .filter((p) => p.active !== false)
@@ -43,7 +40,10 @@ export default function Purchase() {
         </select>
         <input type="text" placeholder="Search game…" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 180 }} />
         <div className="grow" />
-        <span className="dim" style={{ fontSize: 13 }}>{lineCount ? `${lineCount} lines` : 'Enter quantities to build an order'}</span>
+        <span className="dim" style={{ fontSize: 13 }}>
+          {lineCount ? `${lineCount} lines` : 'Enter quantities to build an order'}
+          {feeTotal > 0 && <span className="dimmer"> · incl. {fmtMoney(feeTotal)} packing</span>}
+        </span>
         <span className="mono" style={{ fontWeight: 700, fontSize: 16 }}>{lineCount ? fmtMoney(grand) : ''}</span>
         <button className="btn primary" disabled={!lineCount || !editable} onClick={() => setScreen('review')}
           title={editable ? '' : 'Your role cannot place orders for this hall'}>Review order →</button>

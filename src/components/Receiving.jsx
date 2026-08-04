@@ -57,7 +57,8 @@ export default function Receiving() {
   useEffect(() => {
     setStage('checkin'); setPendingEmails(null); setRecv({}); setSerials({}); setInvoiceNo(''); setPhoto(null); setAiNote('');
     scannedRef.current = new Set(); setScanCount(0); setPendingScan(null);
-    if (cur) store.getPoLines(cur.id).then((ls) => {
+    if (cur) store.getPoLines(cur.id).then((all) => {
+      const ls = all.filter((l) => l.kind !== 'fee');   // packing charges aren't received
       setLines(ls);
       // remaining = ordered minus already-received (for partial second deliveries)
       const rec = {};

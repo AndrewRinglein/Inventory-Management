@@ -52,11 +52,38 @@ export function buildDrafts(qty, products, vendors) {
     if (!p) continue;
     (byVendor[p.vendor_id] ||= []).push({
       product_id: pid, name_snapshot: lineName(p), qty: n, cost: p.cost,
+      kind: 'item', _type: p.type,
     });
   }
-  return Object.entries(byVendor).map(([vendorId, lines]) => {
+  return Object.entries(byVendor).map(([vendorId, rawLines]) => {
     const v = vmap[vendorId];
-    lines.sort((a, b) => a.name_snapshot.localeCompare(b.name_snapshot));
+    rawLines.sort((a, b) => a.name_snapshot.localeCompare(b.name_snapshot));
+    const lines = rawLines.map(({ _type, ...l }) => l);
+    const fee = packingLine(v, rawLines);
+    if (fee) lines.push(fee);
     return { vendor_id: vendorId, vendor_name: v.name, lines, ...poTotals(lines, v.tax_rate) };
   }).sort((a, b) => a.vendor_name.localeCompare(b.vendor_name));
+}
+
+/**
+ * Some vendors add a per-box packing charge on certain product types
+ * (Bingo Vision: $4 per box of flash). It becomes a real PO line so the vendor
+ * sees it and the total matches their invoice — but kind 'fee' means it never
+ * creates an inventory box.
+ * Returns null when the vendor charges nothing or nothing qualifying was ordered.
+ */
+export function packingLine(vendor, lines) {
+  const fee = Number(vendor?.packing_fee) || 0;
+  if (fee <= 0) return null;
+  const types = String(vendor.packing_types || 'flash')
+    .split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
+  const boxes = lines
+    .filter((l) => l.kind !== 'fee' && types.includes(String(l._type || '').toLowerCase()))
+    .reduce((a, l) => a + l.qty, 0);
+  if (boxes <= 0) return null;
+  const label = types.length === 1 ? types[0] : 'items';
+  return {
+    product_id: null, kind: 'fee', qty: boxes, cost: round2(fee),
+    name_snapshot: `Packing — ${fmtMoney(fee)} per box of ${label}`,
+  };
 }

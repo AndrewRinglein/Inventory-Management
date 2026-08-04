@@ -98,6 +98,7 @@ export class DemoStore {
       this.db.purchase_orders.push(po);
       for (const l of d.lines) {
         this.db.po_lines.push({ id: uid(), po_id: po.id, ...l });
+        if (l.kind === 'fee' || !l.product_id) continue;   // packing charge: no boxes
         for (let i = 0; i < l.qty; i++) {
           this.db.boxes.push({
             id: uid(), hall_id: hallId, product_id: l.product_id, po_id: po.id,
