@@ -268,7 +268,7 @@ function stagedSeed() {
   // --- Santa Clara: one closed, one partial, one still in transit ---
   const sc1 = mkPo('sc', 'bv', 'closed', 21, [
     { pid: 'P001', qty: 3, states: ['sold_out', 'opened', 'in_inventory'] },
-    { pid: 'P006', qty: 2, states: ['in_inventory', 'in_inventory'], tags: [null, 'Fri Night'] },
+    { pid: 'P006', qty: 2, states: ['in_inventory', 'in_inventory'], tags: [null, 'Friday'] },
     { pid: 'P012', qty: 2, states: ['opened', 'in_inventory'] },
   ]);
   const sc2 = mkPo('sc', 'md', 'partial', 9, [

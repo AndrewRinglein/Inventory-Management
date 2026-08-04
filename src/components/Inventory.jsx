@@ -3,6 +3,11 @@ import { AppCtx } from '../App.jsx';
 import { fmtMoney } from '../lib/logic/po.js';
 import { countByProduct } from '../lib/logic/boxes.js';
 
+export const SESSIONS = [
+  'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
+  'Saturday Afternoon', 'Saturday Evening', 'Sunday Afternoon', 'Sunday Evening',
+];
+
 const COLS = [
   { key: 'vendor', label: 'Vendor' }, { key: 'type', label: 'Type' },
   { key: 'tickets', label: 'Tickets', r: true }, { key: 'price', label: '$ / ticket', r: true },
@@ -150,8 +155,11 @@ export default function Inventory() {
             <p className="dim" style={{ fontSize: 12.5, marginBottom: 14 }}>
               {products.find((p) => p.id === assignPid)?.name}
             </p>
-            <div className="field"><label>Session (e.g. Fri Night, Sat Matinee)</label>
-              <input type="text" value={assignTag} autoFocus onChange={(e) => setAssignTag(e.target.value)} style={{ width: '100%' }} /></div>
+            <div className="field"><label>Session</label>
+              <select value={assignTag} autoFocus onChange={(e) => setAssignTag(e.target.value)} style={{ width: '100%' }}>
+                <option value="">— pick a session —</option>
+                {SESSIONS.map((sn) => <option key={sn} value={sn}>{sn}</option>)}
+              </select></div>
             <div className="field"><label>How many boxes</label>
               <input type="number" min="1" value={assignQty} onChange={(e) => setAssignQty(Math.max(1, parseInt(e.target.value) || 1))} style={{ width: 90 }} /></div>
             <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
