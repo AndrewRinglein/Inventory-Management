@@ -59,6 +59,8 @@ export default function SettingsScreen() {
                 <input type="email" value={email.fromAddress} onChange={(e) => setEmail({ ...email, fromAddress: e.target.value })} style={{ width: '100%' }} /></Row>
               <Row label="Accounting address (receives PO copies + delivered-$ reports)">
                 <input type="email" value={email.accountingAddress} onChange={(e) => setEmail({ ...email, accountingAddress: e.target.value })} style={{ width: '100%' }} /></Row>
+              <Row label="CC on every email (oversight copy — applies when test mode is OFF)">
+                <input type="email" value={email.ccAddress || ''} onChange={(e) => setEmail({ ...email, ccAddress: e.target.value })} style={{ width: '100%' }} /></Row>
               <Row label={<span><b>Test mode</b> — all emails go to this address instead of vendors</span>}>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <input type="checkbox" checked={!!email.testMode} onChange={(e) => setEmail({ ...email, testMode: e.target.checked })} />

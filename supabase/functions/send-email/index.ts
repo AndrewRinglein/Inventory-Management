@@ -22,6 +22,8 @@ Deno.serve(async (req) => {
     const testMode = settings?.testMode !== false;
     const testAddr = settings?.testAddress || '';
     const from = settings?.fromAddress || 'onboarding@resend.dev';
+    // ccAddress gets a copy of every outgoing email (oversight during rollout)
+    const cc = (settings?.ccAddress || '').trim();
 
     const logs = [];
     for (const e of emails) {
@@ -35,15 +37,18 @@ Deno.serve(async (req) => {
       } else if (!resendKey) {
         errNote = 'RESEND_API_KEY not set';
       } else {
+        const payload: Record<string, unknown> = {
+          from,
+          to: [to],
+          subject: (testMode ? '[TEST] ' : '') + e.subject,
+          text: e.body + (testMode ? `\n\n--- TEST MODE: would have gone to ${e.to} ---` : ''),
+        };
+        // don't CC when test mode already routes everything to one inbox, or if cc == recipient
+        if (cc && !testMode && cc.toLowerCase() !== to.toLowerCase()) payload.cc = [cc];
         const r = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            from,
-            to: [to],
-            subject: (testMode ? '[TEST] ' : '') + e.subject,
-            text: e.body + (testMode ? `\n\n--- TEST MODE: would have gone to ${e.to} ---` : ''),
-          }),
+          body: JSON.stringify(payload),
         });
         if (r.ok) { const d = await r.json(); providerId = d.id; status = 'sent'; }
         else errNote = `resend ${r.status}: ${await r.text()}`;
