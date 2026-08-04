@@ -43,6 +43,7 @@ export default function App() {
   const [openSession, setOpenSession] = useState(() => suggestSession());
   const [receivingPo, setReceivingPo] = useState(null);  // po id selected on Receiving screen
   const [pinAsk, setPinAsk] = useState(null);            // {resolve}
+  const receivingScanRef = useRef(null);                 // Receiving screen registers its scan handler here
   const pinOkRef = useRef(false);
   const toastTimer = useRef(null);
   const undoRef = useRef(null);
@@ -127,6 +128,13 @@ export default function App() {
         setToast('Your role can\'t do that in this hall (read-only)');
         return;
       }
+      if (mode === 'receive' && receivingScanRef.current) {
+        const r = await receivingScanRef.current(code);
+        beep(!!r.ok);
+        setFlash(r.ok ? 'ok' : 'bad'); setTimeout(() => setFlash(null), 500);
+        if (r.message) setToast(r.message);
+        return;
+      }
       const res = resolveScan(code, { mode, boxes, poId: receivingPo });
       if (!res.ok) {
         beep(false);
@@ -174,7 +182,7 @@ export default function App() {
     vendors, products, boxes, pos, payments, orderQty, settings,
     reloadHall, reloadCatalog, reloadSettings,
     setToast, requirePin, scanMode, setScanMode, openSession, setOpenSession,
-    receivingPo, setReceivingPo, productName,
+    receivingPo, setReceivingPo, productName, receivingScanRef,
   };
 
   const SCREENS = {

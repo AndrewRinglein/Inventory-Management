@@ -8,7 +8,13 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const MODEL = 'claude-sonnet-4-5';
 
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
+
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   try {
     const { path } = await req.json();
     const sb = createClient(
@@ -16,10 +22,10 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
     const key = Deno.env.get('ANTHROPIC_API_KEY');
-    if (!key) return Response.json({ error: 'ANTHROPIC_API_KEY not set' }, { status: 500 });
+    if (!key) return Response.json({ error: 'ANTHROPIC_API_KEY not set' }, { status: 500, headers: CORS });
 
     const { data: blob, error } = await sb.storage.from('invoices').download(path);
-    if (error) return Response.json({ error: error.message }, { status: 400 });
+    if (error) return Response.json({ error: error.message }, { status: 400, headers: CORS });
     const bytes = new Uint8Array(await blob.arrayBuffer());
     let b64 = '';
     for (let i = 0; i < bytes.length; i += 32768) {
@@ -51,13 +57,13 @@ If a field is unreadable, use null. Do not invent serials.` },
         }],
       }),
     });
-    if (!resp.ok) return Response.json({ error: `anthropic ${resp.status}: ${await resp.text()}` }, { status: 502 });
+    if (!resp.ok) return Response.json({ error: `anthropic ${resp.status}: ${await resp.text()}` }, { status: 502, headers: CORS });
     const out = await resp.json();
     const text = out.content?.[0]?.text || '{}';
     const m = text.match(/\{[\s\S]*\}/);
     const parsed = m ? JSON.parse(m[0]) : { lines: [] };
-    return Response.json(parsed);
+    return Response.json(parsed, { headers: CORS });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return Response.json({ error: String(err) }, { status: 500, headers: CORS });
   }
 });

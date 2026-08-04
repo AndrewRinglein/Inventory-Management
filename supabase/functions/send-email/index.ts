@@ -5,7 +5,13 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
+
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   try {
     const { emails, hall_id, settings } = await req.json();
     const sb = createClient(
@@ -50,8 +56,8 @@ Deno.serve(async (req) => {
       }).select().single();
       logs.push({ ...data, error: errNote || undefined });
     }
-    return Response.json({ logs });
+    return Response.json({ logs }, { headers: CORS });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return Response.json({ error: String(err) }, { status: 500, headers: CORS });
   }
 });

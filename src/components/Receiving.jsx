@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useState, useRef } from 'react';
 import { AppCtx } from '../App.jsx';
 import { fmtMoney } from '../lib/logic/po.js';
 import { buildShortageEmail, buildDeliveredEmail } from '../lib/logic/emails.js';
@@ -6,19 +6,8 @@ import { buildShortageEmail, buildDeliveredEmail } from '../lib/logic/emails.js'
 const HALL_NAMES = { sc: 'Santa Clara', rwc: 'Redwood City' };
 
 export default function Receiving() {
-  const { hall, pos, boxes, vendors, settings, store, reloadHall, setToast, receivingPo, setReceivingPo, IS_DEMO, can } = useContext(AppCtx);
+  const { hall, pos, boxes, vendors, settings, store, reloadHall, setToast, receivingPo, setReceivingPo, IS_DEMO, can, receivingScanRef } = useContext(AppCtx);
   const open = pos.filter((p) => p.status === 'sent' || p.status === 'partial');
-  if (!can('receive')) {
-    return (
-      <div>
-        <div className="page-head"><div className="h1">Receiving — {HALL_NAMES[hall]}</div></div>
-        <div className="card pad dimmer">
-          Your role can't receive shipments{hall === 'sc' ? ' for Santa Clara' : ' for Redwood City'}.
-          {open.length > 0 && ` (${open.length} order(s) currently awaiting delivery.)`}
-        </div>
-      </div>
-    );
-  }
   const cur = open.find((p) => p.id === receivingPo) || null;
 
   const [lines, setLines] = useState([]);
@@ -30,11 +19,44 @@ export default function Receiving() {
   const [stage, setStage] = useState('checkin'); // checkin | emails
   const [pendingEmails, setPendingEmails] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [pendingScan, setPendingScan] = useState(null);   // scanned code awaiting game pick
+  const [scanCount, setScanCount] = useState(0);
+  const scannedRef = useRef(new Set());
+  const stateRef = useRef({});
+  stateRef.current = { lines, recv, serials, cur };
 
   const vmap = useMemo(() => Object.fromEntries(vendors.map((v) => [v.id, v])), [vendors]);
 
+  // scan-to-receive: every scan either matches a serial from the invoice list,
+  // or asks which game the box belongs to (one tap), keeping manual entry fully usable alongside.
+  useEffect(() => {
+    receivingScanRef.current = async (code) => {
+      const { lines, serials, cur } = stateRef.current;
+      if (!cur || stage !== 'checkin') return { ok: false, message: 'Pick which order arrived first.' };
+      if (scannedRef.current.has(code)) return { ok: false, message: `${code} was already scanned this delivery.` };
+      const hit = lines.find((l) => (serials[l.product_id] || '').split(/[\s,\n]+/).includes(code));
+      if (hit) { applyScan(hit.product_id, code); return { ok: true, message: `✓ ${hit.name_snapshot}` }; }
+      setPendingScan(code);
+      return { ok: false, message: `Serial ${code} isn't on the invoice list — pick the game below.` };
+    };
+    return () => { receivingScanRef.current = null; };
+  }, [stage]);   // eslint-disable-line
+
+  const applyScan = (pid, code) => {
+    scannedRef.current.add(code);
+    setScanCount(scannedRef.current.size);
+    const { lines, recv, serials } = stateRef.current;
+    const line = lines.find((l) => l.product_id === pid);
+    const rem = line ? remainingFor(line) : 0;
+    const now = Math.min((parseInt(recv[pid]) || 0) + 1, rem || 1);
+    setRecv({ ...recv, [pid]: now });
+    const list = (serials[pid] || '').split(/[\s,\n]+/).filter(Boolean);
+    if (!list.includes(code)) setSerials({ ...serials, [pid]: [...list, code].join(', ') });
+  };
+
   useEffect(() => {
     setStage('checkin'); setPendingEmails(null); setRecv({}); setSerials({}); setInvoiceNo(''); setPhoto(null); setAiNote('');
+    scannedRef.current = new Set(); setScanCount(0); setPendingScan(null);
     if (cur) store.getPoLines(cur.id).then((ls) => {
       setLines(ls);
       // remaining = ordered minus already-received (for partial second deliveries)
@@ -51,6 +73,19 @@ export default function Receiving() {
     const already = boxes.filter((b) => b.po_id === cur.id && b.product_id === l.product_id && b.state !== 'on_order' && b.state !== 'missing').length;
     return Math.max(0, l.qty - already);
   };
+
+  // role guard AFTER all hooks (react rules) — masters viewing the other hall land here
+  if (!can('receive')) {
+    return (
+      <div>
+        <div className="page-head"><div className="h1">Receiving — {HALL_NAMES[hall]}</div></div>
+        <div className="card pad dimmer">
+          Your role can't receive shipments{hall === 'sc' ? ' for Santa Clara' : ' for Redwood City'}.
+          {open.length > 0 && ` (${open.length} order(s) currently awaiting delivery.)`}
+        </div>
+      </div>
+    );
+  }
 
   const aiRead = async () => {
     if (!photo) { setToast('Take or choose an invoice photo first'); return; }
@@ -176,7 +211,7 @@ export default function Receiving() {
       <div className="page-head">
         <div className="h1">Receiving — <span className="mono">{cur.num}</span> ({vmap[cur.vendor_id]?.name})</div>
         <div className="grow" />
-        <div className="scan-ind on"><span className="dot" />Scan mode: RECEIVE (scan boxes any time)</div>
+        <div className="scan-ind on"><span className="dot" />Scanning ready — {scanCount} box{scanCount === 1 ? '' : 'es'} scanned · manual entry works too</div>
         <button className="btn ghost" onClick={() => setReceivingPo(null)}>← Different order</button>
       </div>
       <div className="card pad" style={{ marginBottom: 14, display: 'flex', gap: 14, alignItems: 'flex-end', flexWrap: 'wrap' }}>
@@ -216,6 +251,24 @@ export default function Receiving() {
           </tbody>
         </table>
       </div>
+      {pendingScan && (
+        <div className="modal-bg" onClick={() => setPendingScan(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>Which game is this box?</div>
+            <p className="dim" style={{ fontSize: 12.5, marginBottom: 12 }}>
+              Scanned serial <b className="mono">{pendingScan}</b> — tap the game it belongs to:
+            </p>
+            {lines.filter((l) => remainingFor(l) > 0).map((l) => (
+              <button key={l.id} className="btn ghost" style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 6 }}
+                onClick={() => { applyScan(l.product_id, pendingScan); setPendingScan(null); }}>
+                {l.name_snapshot} <span className="dimmer">({remainingFor(l)} expected)</span>
+              </button>
+            ))}
+            {lines.every((l) => remainingFor(l) === 0) && <p className="dimmer">Nothing left expected on this order.</p>}
+            <button className="btn ghost sm" style={{ marginTop: 6 }} onClick={() => setPendingScan(null)}>Cancel — not from this order</button>
+          </div>
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 10 }}>
         <button className="btn green" disabled={busy} onClick={confirm}>
           {busy ? 'Confirming…' : '✓ Confirm shipment & update inventory'}

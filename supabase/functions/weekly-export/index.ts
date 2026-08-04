@@ -16,7 +16,13 @@ const csv = (rows: Record<string, unknown>[]) => {
   return [cols.join(','), ...rows.map((r) => cols.map((c) => esc(r[c])).join(','))].join('\n');
 };
 
-Deno.serve(async () => {
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   try {
     const sb = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -25,7 +31,7 @@ Deno.serve(async () => {
     const { data: emailCfgRow } = await sb.from('settings').select('value').eq('key', 'email').single();
     const cfg = emailCfgRow?.value || {};
     const to = cfg.accountingAddress || cfg.testAddress;
-    if (!to) return Response.json({ error: 'no accounting/test address configured' }, { status: 400 });
+    if (!to) return Response.json({ error: 'no accounting/test address configured' }, { status: 400, headers: CORS });
 
     const [boxes, pos, payments] = await Promise.all([
       sb.from('boxes').select('hall_id,product_id,serial,state,cost,received_at,opened_at,sold_out_at'),
@@ -55,8 +61,8 @@ Deno.serve(async () => {
       kind: 'export', to_addr: to, subject: `Weekly export ${stamp}`,
       body: `(${body.length} chars)`, test_mode: false, status: r.ok ? 'sent' : 'failed',
     });
-    return Response.json({ ok: r.ok });
+    return Response.json({ ok: r.ok }, { headers: CORS });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return Response.json({ error: String(err) }, { status: 500, headers: CORS });
   }
 });

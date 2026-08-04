@@ -39,30 +39,38 @@ export default function Review() {
     if (!can('send')) { setToast('Your role cannot send orders for this hall'); return; }
     if (!drafts.length || busy) return;
     setBusy(true);
+    let pos = null;
     try {
-      // assign real numbers + persist sequence
-      let seq = { ...(settings.po_sequence || {}) };
+      // ALWAYS number from the freshly-stored sequence (never React state) —
+      // prevents duplicate PO numbers after a failed send or a second open window.
+      let seq = { ...((await store.getSetting('po_sequence')) || {}) };
       const numbered = drafts.map((d) => {
         const r = nextPoNum(seq, hall, d.vendor_id);
         seq = r.seq;
         return { ...d, num: r.num };
       });
       await store.setSetting('po_sequence', seq);
-      const pos = await store.createSentPos(hall, drafts, numbered);
+      pos = await store.createSentPos(hall, drafts, numbered);
+      // POs exist from here on: clear the builder immediately so a retry can never duplicate them
+      await store.clearOrderQty(hall);
+      await reloadHall();
+      await reloadSettings();
       const finalEmails = buildOrderEmails(
         numbered.map((d, i) => ({ ...d, sent_at: pos[i]?.sent_at })),
         vendors, hallName, hallAddress, accounting
       ).map((e, i) => ({ ...e, ...(edits[i] || {}) }));
       await store.sendEmails(finalEmails, hall);
-      await store.clearOrderQty(hall);
-      await reloadHall();
-      await reloadSettings();
       setToast(IS_DEMO
         ? `${pos.length} PO(s) created; ${finalEmails.length} emails logged (demo — not sent)`
         : `${pos.length} PO(s) sent; ${finalEmails.length} emails delivered to ${emailCfg.testMode ? 'TEST inbox' : 'vendors + accounting'}`);
       setScreen('orders');
     } catch (err) {
-      setToast('Send failed: ' + err.message);
+      if (pos) {
+        setToast(`${pos.length} PO(s) WERE created, but the emails failed: ${err.message}. Find them under Open Orders — do not re-enter the order.`, null, 9000);
+        setScreen('orders');
+      } else {
+        setToast('Send failed: ' + err.message);
+      }
     } finally {
       setBusy(false);
     }
