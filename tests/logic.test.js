@@ -1,0 +1,149 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { poTotals, nextPoNum, buildDrafts, lineName, round2 } from '../src/lib/logic/po.js';
+import { canTransition, transition, countByProduct } from '../src/lib/logic/boxes.js';
+import { resolveScan } from '../src/lib/logic/scan.js';
+import { buildOrderEmails, buildDeliveredEmail, buildShortageEmail } from '../src/lib/logic/emails.js';
+
+// ---------- PO math ----------
+test('poTotals matches spreadsheet math (9.75% tax)', () => {
+  // From the SC sheet: Pacific block totaled 1179.00 -> tax 114.9525 -> 1293.9525
+  const lines = [{ qty: 1, cost: 1179 }];
+  const t = poTotals(lines, 0.0975);
+  assert.equal(t.subtotal, 1179);
+  assert.equal(t.tax, 114.95);           // rounded to cents at PO level
+  assert.equal(t.total, 1293.95);
+});
+
+test('poTotals sums multiple lines and rounds once', () => {
+  const t = poTotals([{ qty: 4, cost: 86.4 }, { qty: 6, cost: 86.4 }, { qty: 3, cost: 60 }], 0.0975);
+  assert.equal(t.subtotal, round2(345.6 + 518.4 + 180));   // 1044
+  assert.equal(t.total, round2(1044 * 1.0975));
+});
+
+test('PO numbering increments per hall+vendor and pads', () => {
+  const d = new Date('2026-08-01T12:00:00');
+  let r = nextPoNum({}, 'sc', 'bv', d);
+  assert.equal(r.num, 'SC-2026-08-BV-001');
+  r = nextPoNum(r.seq, 'sc', 'bv', d);
+  assert.equal(r.num, 'SC-2026-08-BV-002');
+  const r2 = nextPoNum(r.seq, 'rwc', 'bv', d);
+  assert.equal(r2.num, 'RWC-2026-08-BV-001');    // independent sequence
+  const r3 = nextPoNum(r2.seq, 'sc', 'cbs', d);
+  assert.equal(r3.num, 'SC-2026-08-CBS-001');
+});
+
+const products = [
+  { id: 'P1', vendor_id: 'bv', name: 'Big Fish', cost: 117.3, tickets: 1995, price_per_ticket: 1, type: 'flash' },
+  { id: 'P2', vendor_id: 'bv', name: 'Casino City', cost: 230.5, tickets: 1960, price_per_ticket: 2, type: 'flash' },
+  { id: 'P3', vendor_id: 'md', name: 'Moolah', cost: 120, tickets: 2400, price_per_ticket: 1, type: 'flash' },
+  { id: 'P4', vendor_id: 'md', name: 'Fat Kitty', cost: 89.1, tickets: null, price_per_ticket: 1, type: 'flash' },
+];
+const vendors = [
+  { id: 'bv', name: 'Bingo Vision', email: 'bv@x.com', tax_rate: 0.0975 },
+  { id: 'md', name: 'Marathon', email: 'md@x.com', tax_rate: 0.0975 },
+];
+
+test('buildDrafts groups by vendor, skips zero qty, locks prices', () => {
+  const drafts = buildDrafts({ P1: 2, P2: 0, P3: 1 }, products, vendors);
+  assert.equal(drafts.length, 2);
+  const bv = drafts.find((d) => d.vendor_id === 'bv');
+  assert.equal(bv.lines.length, 1);
+  assert.equal(bv.lines[0].cost, 117.3);
+  assert.equal(bv.subtotal, 234.6);
+});
+
+test('lineName includes tickets/price only when known', () => {
+  assert.equal(lineName(products[0]), 'Big Fish (1995/$1)');
+  assert.equal(lineName(products[1]), 'Casino City (1960/$2)');
+  assert.equal(lineName(products[3]), 'Fat Kitty');
+});
+
+// ---------- box state machine ----------
+test('legal lifecycle passes, illegal jumps throw', () => {
+  let b = { state: 'on_order' };
+  b = transition(b, 'in_inventory');
+  assert.ok(b.received_at);
+  b = transition(b, 'opened');
+  b = transition(b, 'sold_out');
+  assert.ok(b.sold_out_at);
+  assert.throws(() => transition({ state: 'sold_out' }, 'in_inventory'));
+  assert.throws(() => transition({ state: 'on_order' }, 'sold_out'));
+  assert.throws(() => transition({ state: 'on_order' }, 'opened'));
+});
+
+test('undo paths are allowed', () => {
+  assert.ok(canTransition('opened', 'in_inventory'));   // undo open
+  assert.ok(canTransition('sold_out', 'opened'));       // undo sold-out
+  assert.ok(canTransition('missing', 'in_inventory'));  // late arrival
+});
+
+test('countByProduct tallies states', () => {
+  const c = countByProduct([
+    { product_id: 'P1', state: 'in_inventory' },
+    { product_id: 'P1', state: 'in_inventory' },
+    { product_id: 'P1', state: 'opened' },
+    { product_id: 'P1', state: 'on_order' },
+    { product_id: 'P2', state: 'sold_out' },
+  ]);
+  assert.deepEqual(c.P1, { inv: 2, open: 1, onorder: 1, sold: 0, missing: 0 });
+  assert.equal(c.P2.sold, 1);
+});
+
+// ---------- scan resolver ----------
+const boxes = [
+  { id: 'b1', serial: 'SN100', state: 'on_order', po_id: 'po1', product_id: 'P1' },
+  { id: 'b2', serial: 'SN200', state: 'in_inventory', product_id: 'P1' },
+  { id: 'b3', serial: 'SN300', state: 'opened', opened_at: '2026-07-30T21:14:00Z', product_id: 'P1' },
+  { id: 'b4', serial: 'SN400', state: 'sold_out', product_id: 'P2' },
+];
+
+test('resolver: mode off', () => {
+  assert.equal(resolveScan('SN200', { mode: 'off', boxes }).ok, false);
+});
+test('resolver: unknown code', () => {
+  const r = resolveScan('NOPE', { mode: 'open', boxes });
+  assert.equal(r.reason, 'unknown');
+});
+test('resolver: receive matches on-order box on the right PO', () => {
+  assert.equal(resolveScan('SN100', { mode: 'receive', boxes, poId: 'po1' }).action, 'receive');
+  assert.equal(resolveScan('SN100', { mode: 'receive', boxes, poId: 'po2' }).reason, 'wrong_po');
+});
+test('resolver: open works once, duplicate detected', () => {
+  assert.equal(resolveScan('SN200', { mode: 'open', boxes }).action, 'open');
+  assert.equal(resolveScan('SN300', { mode: 'open', boxes }).reason, 'duplicate');
+});
+test('resolver: soldout requires opened first', () => {
+  assert.equal(resolveScan('SN300', { mode: 'soldout', boxes }).action, 'soldout');
+  assert.equal(resolveScan('SN200', { mode: 'soldout', boxes }).reason, 'wrong_state');
+  assert.equal(resolveScan('SN400', { mode: 'soldout', boxes }).reason, 'duplicate');
+});
+
+// ---------- emails ----------
+test('order run builds 2 emails per vendor PO', () => {
+  const pos = [{ num: 'SC-2026-08-BV-001', vendor_id: 'bv', lines: [{ qty: 2, name_snapshot: 'Big Fish (1995/$1)', cost: 117.3 }], subtotal: 234.6, tax: 22.87, total: 257.47 }];
+  const emails = buildOrderEmails(pos, vendors, 'Santa Clara', '123 Main St', 'acct@hall.com');
+  assert.equal(emails.length, 2);
+  assert.equal(emails[0].kind, 'po');
+  assert.equal(emails[0].to, 'bv@x.com');
+  assert.equal(emails[1].kind, 'po_copy');
+  assert.match(emails[1].subject, /ACCOUNTING COPY/);
+  assert.match(emails[0].body, /TOTAL:.*\$257\.47/s);
+});
+
+test('delivered email computes pay amount from received only, flags variance', () => {
+  const po = { num: 'SC-1', total: 257.47, lines: [] };
+  const received = [{ qty: 1, name_snapshot: 'Big Fish (1995/$1)', cost: 117.3 }];
+  const missing = [{ qty: 1, name_snapshot: 'Big Fish (1995/$1)', cost: 117.3 }];
+  const e = buildDeliveredEmail(po, vendors[0], 'Santa Clara', 'INV-9', received, missing);
+  assert.equal(e.amount, Math.round(117.3 * 1.0975 * 100) / 100);
+  assert.match(e.subject, /SHORT DELIVERY/);
+  assert.match(e.body, /do not pay/);
+});
+
+test('shortage email lists missing value', () => {
+  const e = buildShortageEmail({ num: 'SC-1' }, vendors[0], 'SC', [{ qty: 2, name_snapshot: 'X', cost: 50 }]);
+  assert.match(e.body, /\$100\.00/);
+  assert.match(e.subject, /Short delivery/);
+});
