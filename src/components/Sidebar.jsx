@@ -2,7 +2,12 @@ import React, { useContext } from 'react';
 import { AppCtx } from '../App.jsx';
 
 export default function Sidebar() {
-  const { hall, setHall, screen, setScreen, payments, pos, store, role, roleLabel, can } = useContext(AppCtx);
+  const { hall, setHall, screen, setScreen, payments, pos, store, role, roleLabel, can, IS_SANDBOX } = useContext(AppCtx);
+  const demoHref = (on) => {
+    const u = new URL(window.location.href);
+    if (on) u.searchParams.set('demo', ''); else u.searchParams.delete('demo');
+    return u.pathname + '?' + u.searchParams.toString().replace(/=(&|$)/g, '$1');
+  };
   const openPay = payments.filter((p) => p.status === 'open').length;
   const openPos = pos.filter((p) => p.status === 'sent' || p.status === 'partial').length;
 
@@ -35,6 +40,12 @@ export default function Sidebar() {
       <div className="sb-sec">Admin</div>
       <Item id="games" label={can('editCatalog') ? 'Add / Update Games' : 'Game Catalog'} />
       {can('settings') && <Item id="settings" label="Settings" />}
+      <div className="sb-sec">Training</div>
+      {IS_SANDBOX ? (
+        <a className="nav-item" style={{ textDecoration: 'none', color: '#8a6d1f', fontWeight: 600 }} href={demoHref(false)}>← Exit training</a>
+      ) : (
+        <a className="nav-item" style={{ textDecoration: 'none' }} href={demoHref(true)} title="Sandbox with fake data at every stage — never touches real inventory">🎓 Demo / Training</a>
+      )}
       <div style={{ marginTop: 22, padding: '0 6px' }}>
         <button className="btn ghost sm" style={{ width: '100%' }}
           onClick={async () => { await store.signOut(); location.reload(); }}>
