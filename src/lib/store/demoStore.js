@@ -275,7 +275,6 @@ function stagedSeed() {
       body: '(demo email body)', test_mode: true, provider_id: null, status: 'sent', created_at: daysAgo(sentDays),
     });
     mail('po', 'vendor@example.com', `Purchase Order ${num}`);
-    mail('po_copy', 'accounting@example.com', `[ACCOUNTING COPY] Purchase Order ${num}`);
     return po;
   };
 
