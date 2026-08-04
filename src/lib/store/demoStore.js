@@ -35,11 +35,23 @@ export class DemoStore {
   // ---- auth (demo: single password stored in settings) ----
   async signIn(_email, pass) {
     const ok = pass === (this.db.settings.demo_password || 'bingo');
-    if (ok) { this.session = { email: 'demo@hall.local' }; return { ok: true }; }
+    if (ok) {
+      this.session = { email: 'demo@hall.local' };
+      try { localStorage.setItem(this.lsKey + '_session', '1'); } catch {}
+      return { ok: true };
+    }
     return { ok: false, error: 'Wrong password (demo default: bingo)' };
   }
-  async signOut() { this.session = null; }
-  async getSession() { return this.session || null; }
+  async signOut() {
+    this.session = null;
+    try { localStorage.removeItem(this.lsKey + '_session'); } catch {}
+  }
+  async getSession() {
+    if (!this.session) {
+      try { if (localStorage.getItem(this.lsKey + '_session')) this.session = { email: 'demo@hall.local' }; } catch {}
+    }
+    return this.session || null;
+  }
 
   // ---- catalog ----
   async getVendors() { return [...this.db.vendors]; }

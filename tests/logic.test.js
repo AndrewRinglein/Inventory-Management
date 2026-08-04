@@ -121,15 +121,24 @@ test('resolver: soldout requires opened first', () => {
 });
 
 // ---------- emails ----------
-test('order run builds 2 emails per vendor PO', () => {
+test('order run builds one vendor email per PO (accounting not copied on POs)', () => {
   const pos = [{ num: 'SC-2026-08-BV-001', vendor_id: 'bv', lines: [{ qty: 2, name_snapshot: 'Big Fish (1995/$1)', cost: 117.3 }], subtotal: 234.6, tax: 22.87, total: 257.47 }];
   const emails = buildOrderEmails(pos, vendors, 'Santa Clara', '123 Main St', 'acct@hall.com');
-  assert.equal(emails.length, 2);
+  assert.equal(emails.length, 1);
   assert.equal(emails[0].kind, 'po');
   assert.equal(emails[0].to, 'bv@x.com');
-  assert.equal(emails[1].kind, 'po_copy');
-  assert.match(emails[1].subject, /ACCOUNTING COPY/);
+  assert.ok(!emails.some((e) => e.to === 'acct@hall.com'), 'accounting must not be on PO emails');
   assert.match(emails[0].body, /TOTAL:.*\$257\.47/s);
+});
+
+test('two vendors -> two PO emails, still no accounting copies', () => {
+  const pos = [
+    { num: 'SC-1', vendor_id: 'bv', lines: [{ qty: 1, name_snapshot: 'A', cost: 10 }], subtotal: 10, tax: 1, total: 11 },
+    { num: 'SC-2', vendor_id: 'md', lines: [{ qty: 1, name_snapshot: 'B', cost: 20 }], subtotal: 20, tax: 2, total: 22 },
+  ];
+  const emails = buildOrderEmails(pos, vendors, 'Santa Clara', '', 'acct@hall.com');
+  assert.equal(emails.length, 2);
+  assert.deepEqual(emails.map((e) => e.to).sort(), ['bv@x.com', 'md@x.com']);
 });
 
 test('delivered email computes pay amount from received only, flags variance', () => {

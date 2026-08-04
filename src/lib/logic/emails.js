@@ -25,15 +25,22 @@ function poBody(po, vendor, hallName, hallAddress) {
   ].join('\n');
 }
 
-/** The order run's emails: one PO per vendor + one accounting copy each (up to 8). */
-export function buildOrderEmails(pos, vendors, hallName, hallAddress, accountingAddress) {
+/**
+ * The order run's emails: one PO per vendor (up to 4).
+ * Accounting is intentionally NOT copied on POs — they receive the delivered-$ email at
+ * receiving time, which states what to actually pay. The CC address (Settings) still gets
+ * a copy of everything for oversight.
+ */
+export function buildOrderEmails(pos, vendors, hallName, hallAddress, _accountingAddress) {
   const vmap = Object.fromEntries(vendors.map((v) => [v.id, v]));
   const out = [];
   for (const po of pos) {
     const v = vmap[po.vendor_id];
-    const body = poBody(po, v, hallName, hallAddress);
-    out.push({ kind: 'po', po_num: po.num, to: v.email, subject: `Purchase Order ${po.num} — ${hallName}`, body });
-    out.push({ kind: 'po_copy', po_num: po.num, to: accountingAddress, subject: `[ACCOUNTING COPY] Purchase Order ${po.num} — ${hallName}`, body });
+    out.push({
+      kind: 'po', po_num: po.num, to: v.email,
+      subject: `Purchase Order ${po.num} — ${hallName}`,
+      body: poBody(po, v, hallName, hallAddress),
+    });
   }
   return out;
 }
