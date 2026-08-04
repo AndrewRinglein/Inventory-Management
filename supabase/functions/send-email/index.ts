@@ -13,7 +13,7 @@ const CORS = {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   try {
-    const { emails, hall_id, settings } = await req.json();
+    const { emails, hall_id, settings, sender } = await req.json();
     const sb = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
@@ -21,7 +21,11 @@ Deno.serve(async (req) => {
     const resendKey = Deno.env.get('RESEND_API_KEY');
     const testMode = settings?.testMode !== false;
     const testAddr = settings?.testAddress || '';
-    const from = settings?.fromAddress || 'onboarding@resend.dev';
+    const fromAddr = settings?.fromAddress || 'onboarding@resend.dev';
+    // Emails come from a named person, not "the system" — vendors reply to a human.
+    const senderName = [sender?.name, sender?.org].filter(Boolean).join(' — ').trim();
+    const from = senderName ? `${senderName} <${fromAddr}>` : fromAddr;
+    const replyTo = (sender?.replyTo || '').trim();
     // ccAddress gets a copy of every outgoing email (oversight during rollout)
     const cc = (settings?.ccAddress || '').trim();
 
@@ -45,6 +49,7 @@ Deno.serve(async (req) => {
         };
         // don't CC when test mode already routes everything to one inbox, or if cc == recipient
         if (cc && !testMode && cc.toLowerCase() !== to.toLowerCase()) payload.cc = [cc];
+        if (replyTo) payload.reply_to = [replyTo];
         const r = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },

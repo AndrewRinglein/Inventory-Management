@@ -9,6 +9,7 @@ export default function SettingsScreen() {
   const [halls, setHalls] = useState(null);
   const [pin, setPin] = useState('');
   const [vend, setVend] = useState(null);
+  const [sender, setSender] = useState(null);
 
   useEffect(() => {
     (async () => { setUnlocked(await requirePin()); })();
@@ -17,17 +18,22 @@ export default function SettingsScreen() {
   useEffect(() => {
     setEmail(settings.email || { testMode: true, testAddress: '', fromAddress: '', accountingAddress: '' });
     setHalls(settings.halls_config || { sc: { address: '' }, rwc: { address: '' } });
-    setVend(Object.fromEntries(vendors.map((v) => [v.id, v.email || ''])));
+    setVend(Object.fromEntries(vendors.map((v) => [v.id, { email: v.email || '', contact_name: v.contact_name || '' }])));
+    setSender(settings.sender || { name: '', org: '', title: '', phone: '', replyTo: '' });
   }, [settings, vendors]);
 
   if (!unlocked) return <div className="card pad dimmer">Settings are PIN-protected.</div>;
-  if (!email || !halls || !vend) return null;
+  if (!email || !halls || !vend || !sender) return null;
 
   const save = async () => {
     await store.setSetting('email', email);
     await store.setSetting('halls_config', halls);
+    await store.setSetting('sender', sender);
     for (const v of vendors) {
-      if ((v.email || '') !== vend[v.id]) await store.updateVendor(v.id, { email: vend[v.id] });
+      const next = vend[v.id];
+      if ((v.email || '') !== next.email || (v.contact_name || '') !== next.contact_name) {
+        await store.updateVendor(v.id, { email: next.email, contact_name: next.contact_name });
+      }
     }
     if (pin.trim()) await store.setSetting('admin_pin', { pin: pin.trim() });
     await reloadSettings(); await reloadCatalog();
@@ -53,12 +59,35 @@ export default function SettingsScreen() {
       <div className="two-col">
         <div>
           <div className="card pad" style={{ marginBottom: 14 }}>
+            <b style={{ fontSize: 13.5 }}>Who the emails come from</b>
+            <p className="muted-note" style={{ marginTop: 2, marginBottom: 8 }}>
+              Vendors see this name in their inbox and in the signature — emails should come from a person, not a system.
+            </p>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <div style={{ flex: 1 }}><Row label="Name"><input type="text" placeholder="Sagit" value={sender.name || ''} onChange={(e) => setSender({ ...sender, name: e.target.value })} style={{ width: '100%' }} /></Row></div>
+              <div style={{ flex: 1 }}><Row label="Organization"><input type="text" placeholder="Vanguard" value={sender.org || ''} onChange={(e) => setSender({ ...sender, org: e.target.value })} style={{ width: '100%' }} /></Row></div>
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <div style={{ flex: 1 }}><Row label="Title (optional)"><input type="text" value={sender.title || ''} onChange={(e) => setSender({ ...sender, title: e.target.value })} style={{ width: '100%' }} /></Row></div>
+              <div style={{ flex: 1 }}><Row label="Phone (optional)"><input type="text" value={sender.phone || ''} onChange={(e) => setSender({ ...sender, phone: e.target.value })} style={{ width: '100%' }} /></Row></div>
+            </div>
+            <Row label="Reply-to address (where vendor replies should land)">
+              <input type="email" value={sender.replyTo || ''} onChange={(e) => setSender({ ...sender, replyTo: e.target.value })} style={{ width: '100%' }} /></Row>
+            <p className="muted-note">
+              Emails will appear as: <b>{[sender.name, sender.org].filter(Boolean).join(' — ') || '(no name set)'}</b> &lt;{email.fromAddress || 'not set'}&gt;
+            </p>
+          </div>
+          <div className="card pad" style={{ marginBottom: 14 }}>
             <b style={{ fontSize: 13.5 }}>Email</b>
             <div style={{ marginTop: 10 }}>
               <Row label="Send FROM address (your orders@ address)">
                 <input type="email" value={email.fromAddress} onChange={(e) => setEmail({ ...email, fromAddress: e.target.value })} style={{ width: '100%' }} /></Row>
-              <Row label="Accounting address (receives PO copies + delivered-$ reports)">
-                <input type="email" value={email.accountingAddress} onChange={(e) => setEmail({ ...email, accountingAddress: e.target.value })} style={{ width: '100%' }} /></Row>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <div style={{ flex: 2 }}><Row label="Accounting address (gets the delivered-$ report)">
+                  <input type="email" value={email.accountingAddress} onChange={(e) => setEmail({ ...email, accountingAddress: e.target.value })} style={{ width: '100%' }} /></Row></div>
+                <div style={{ flex: 1 }}><Row label="Their first name">
+                  <input type="text" placeholder="Jamie" value={email.accountingName || ''} onChange={(e) => setEmail({ ...email, accountingName: e.target.value })} style={{ width: '100%' }} /></Row></div>
+              </div>
               <Row label="CC on every email (oversight copy — applies when test mode is OFF)">
                 <input type="email" value={email.ccAddress || ''} onChange={(e) => setEmail({ ...email, ccAddress: e.target.value })} style={{ width: '100%' }} /></Row>
               <Row label={<span><b>Test mode</b> — all emails go to this address instead of vendors</span>}>
@@ -72,9 +101,16 @@ export default function SettingsScreen() {
             <b style={{ fontSize: 13.5 }}>Vendor PO addresses</b>
             <div style={{ marginTop: 10 }}>
               {vendors.map((v) => (
-                <Row key={v.id} label={v.name}>
-                  <input type="email" value={vend[v.id]} onChange={(e) => setVend({ ...vend, [v.id]: e.target.value })} style={{ width: '100%' }} />
-                </Row>
+                <div key={v.id} style={{ display: 'flex', gap: 10 }}>
+                  <div style={{ flex: 2 }}><Row label={v.name}>
+                    <input type="email" value={vend[v.id].email}
+                      onChange={(e) => setVend({ ...vend, [v.id]: { ...vend[v.id], email: e.target.value } })} style={{ width: '100%' }} />
+                  </Row></div>
+                  <div style={{ flex: 1 }}><Row label="Contact first name">
+                    <input type="text" placeholder="Scott" value={vend[v.id].contact_name}
+                      onChange={(e) => setVend({ ...vend, [v.id]: { ...vend[v.id], contact_name: e.target.value } })} style={{ width: '100%' }} />
+                  </Row></div>
+                </div>
               ))}
             </div>
           </div>

@@ -108,9 +108,9 @@ export class SupabaseStore {
 
   // ---- emails: real sending via the send-email edge function ----
   async sendEmails(list, hallId) {
-    const settings = await this.getSetting('email');
+    const [settings, sender] = await Promise.all([this.getSetting('email'), this.getSetting('sender')]);
     const { data, error } = await this.sb.functions.invoke('send-email', {
-      body: { emails: list, hall_id: hallId, settings },
+      body: { emails: list, hall_id: hallId, settings, sender },
     });
     if (error) throw new Error('send-email failed: ' + error.message);
     return data.logs;

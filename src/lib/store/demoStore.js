@@ -328,6 +328,7 @@ function seed() {
   return {
     vendors: CATALOG.vendors.map((v) => ({
       id: v.id, name: v.name, email: v.email || '', tax_rate: v.taxRate ?? 0.0975, active: true,
+      contact_name: ({ bv: 'Scott', md: 'Esteban', pbf: 'Jordynn' })[v.id] || '',
     })),
     products: CATALOG.products.map((p) => ({
       id: p.id, vendor_id: p.vendor, name: p.name, orig_name: p.origName || '',
@@ -343,6 +344,7 @@ function seed() {
       admin_pin: { pin: '1234' },
       halls_config: { sc: { address: '' }, rwc: { address: '' } },
       demo_password: 'bingo',
+      sender: { name: 'Sagit', org: 'Vanguard', title: '', phone: '', replyTo: '' },
     },
   };
 }

@@ -1,28 +1,57 @@
-// Email template builders — pure functions returning {kind, to, subject, body}.
+// Email templates — pure functions returning {kind, to, subject, body}.
 // Sending happens elsewhere (edge function in production, log-only in demo).
+//
+// These are written to read like a person wrote them, because a person is
+// accountable for them. Every email opens with the recipient's name, explains
+// the situation in plain sentences, makes one clear ask, and is signed by a
+// named human (configured in Settings → Sender identity).
 
 import { fmtMoney } from './po.js';
 
-const line = (l) => `  ${String(l.qty).padStart(3)} x ${l.name_snapshot.padEnd(48)} @ ${fmtMoney(l.cost).padStart(9)}  =  ${fmtMoney(l.qty * l.cost).padStart(10)}`;
+/** "Sagit" / "Sagit — Vanguard" for signatures and the From display name. */
+export function senderLabel(sender = {}) {
+  const name = (sender.name || '').trim();
+  const org = (sender.org || '').trim();
+  if (name && org) return `${name} — ${org}`;
+  return name || org || '';
+}
 
-function poBody(po, vendor, hallName, hallAddress) {
+function signature(sender = {}, hallName) {
+  const out = ['', 'Thanks,', (sender.name || '').trim() || 'The inventory team'];
+  const orgLine = [sender.title, sender.org].filter(Boolean).join(', ');
+  if (orgLine) out.push(orgLine);
+  if (hallName) out.push(hallName);
+  if (sender.phone) out.push(sender.phone);
+  return out;
+}
+
+const greet = (name) => (name ? `Hi ${name},` : 'Hello,');
+
+/** Right-aligned money column so the numbers stay readable in plain text. */
+const line = (l) =>
+  `  ${String(l.qty).padStart(2)} x ${l.name_snapshot.padEnd(38).slice(0, 38)}  ${fmtMoney(l.cost).padStart(9)} ea  =${fmtMoney(l.qty * l.cost).padStart(11)}`;
+
+function poBody(po, vendor, hallName, hallAddress, sender) {
+  const date = new Date(po.sent_at || Date.now()).toLocaleDateString('en-US', {
+    month: 'long', day: 'numeric', year: 'numeric',
+  });
   return [
-    `PURCHASE ORDER ${po.num}`,
-    `Date: ${new Date(po.sent_at || Date.now()).toLocaleDateString('en-US')}`,
+    greet(vendor.contact_name),
     ``,
-    `From:  ${hallName}${hallAddress ? `\nDeliver to: ${hallAddress}` : ''}`,
-    `To:    ${vendor.name}`,
+    `Here's our next order for ${hallName}. Purchase order number is ${po.num}.`,
     ``,
-    `Items:`,
     ...po.lines.map(line),
     ``,
-    `  Subtotal:       ${fmtMoney(po.subtotal).padStart(12)}`,
-    `  Tax (${(vendor.tax_rate * 100).toFixed(2)}%):    ${fmtMoney(po.tax).padStart(12)}`,
-    `  TOTAL:          ${fmtMoney(po.total).padStart(12)}`,
+    `  ${'Subtotal:'.padEnd(20)}${fmtMoney(po.subtotal).padStart(11)}`,
+    `  ${`Tax (${(vendor.tax_rate * 100).toFixed(2)}%):`.padEnd(20)}${fmtMoney(po.tax).padStart(11)}`,
+    `  ${'Total:'.padEnd(20)}${fmtMoney(po.total).padStart(11)}`,
     ``,
-    `Please confirm receipt of this order and expected delivery date.`,
-    `Reference PO ${po.num} on the delivery invoice.`,
-  ].join('\n');
+    hallAddress ? `Please deliver to:\n${hallAddress}` : '',
+    hallAddress ? `` : '',
+    `Could you confirm you got this and let me know when it should arrive? Please put ${po.num} on the invoice so we can match it up when it lands.`,
+    `Ordered ${date}.`,
+    ...signature(sender, hallName),
+  ].filter((l) => l !== null).join('\n');
 }
 
 /**
@@ -31,61 +60,80 @@ function poBody(po, vendor, hallName, hallAddress) {
  * receiving time, which states what to actually pay. The CC address (Settings) still gets
  * a copy of everything for oversight.
  */
-export function buildOrderEmails(pos, vendors, hallName, hallAddress, _accountingAddress) {
+export function buildOrderEmails(pos, vendors, hallName, hallAddress, _accountingAddress, sender = {}) {
   const vmap = Object.fromEntries(vendors.map((v) => [v.id, v]));
   const out = [];
   for (const po of pos) {
     const v = vmap[po.vendor_id];
     out.push({
       kind: 'po', po_num: po.num, to: v.email,
-      subject: `Purchase Order ${po.num} — ${hallName}`,
-      body: poBody(po, v, hallName, hallAddress),
+      subject: `${hallName} order — PO ${po.num}`,
+      body: poBody(po, v, hallName, hallAddress, sender),
     });
   }
   return out;
 }
 
-export function buildShortageEmail(po, vendor, hallName, missingLines) {
+export function buildShortageEmail(po, vendor, hallName, missingLines, sender = {}) {
   const value = missingLines.reduce((a, l) => a + l.qty * l.cost, 0);
+  const n = missingLines.reduce((a, l) => a + l.qty, 0);
   return {
     kind: 'shortage', po_num: po.num, to: vendor.email,
-    subject: `Short delivery on PO ${po.num} — ${hallName}`,
+    subject: `Missing items from PO ${po.num} — ${hallName}`,
     body: [
-      `Regarding Purchase Order ${po.num}:`,
+      greet(vendor.contact_name),
       ``,
-      `The following ordered items were not included in the delivery:`,
+      `Thanks for the delivery on ${po.num}. When we checked everything in, ${n === 1 ? 'one item was' : `${n} items were`} missing from the shipment:`,
+      ``,
       ...missingLines.map(line),
       ``,
-      `  Missing value:  ${fmtMoney(value).padStart(12)}`,
+      `  ${'Missing value:'.padEnd(20)}${fmtMoney(value).padStart(11)}`,
       ``,
-      `Please advise whether these items will ship as a backorder or be credited.`,
+      `Could you let me know whether ${n === 1 ? "it's" : "they're"} coming as a backorder, or if we should expect a credit instead? We've only recorded what actually arrived on our end.`,
+      ...signature(sender, hallName),
     ].join('\n'),
   };
 }
 
-export function buildDeliveredEmail(po, vendor, hallName, invoiceNo, receivedLines, missingLines) {
+export function buildDeliveredEmail(po, vendor, hallName, invoiceNo, receivedLines, missingLines, sender = {}, accountingName = '') {
   const received = receivedLines.reduce((a, l) => a + l.qty * l.cost, 0);
   const tax = Math.round(received * vendor.tax_rate * 100) / 100;
   const owed = Math.round((received + tax) * 100) / 100;
   const variance = Math.round((po.total - owed) * 100) / 100;
+  const short = missingLines.length > 0;
+
   return {
     kind: 'delivered', po_num: po.num, to: '(accounting)',
-    subject: `Delivered: PO ${po.num} — pay ${fmtMoney(owed)}${missingLines.length ? ' (SHORT DELIVERY)' : ''}`,
+    subject: short
+      ? `Pay ${fmtMoney(owed)} — PO ${po.num} (${vendor.name}) — short delivery`
+      : `Pay ${fmtMoney(owed)} — PO ${po.num} (${vendor.name})`,
     body: [
-      `Delivery received against PO ${po.num} (${vendor.name}, ${hallName}).`,
-      `Vendor invoice #: ${invoiceNo || '(none entered)'}`,
+      greet(accountingName),
       ``,
-      `Received items:`,
+      `The order from ${vendor.name} for ${hallName} came in${invoiceNo ? ` on invoice ${invoiceNo}` : ''}.`,
+      short
+        ? `Part of it was short, so the amount to pay is less than the original PO. Please pay ${fmtMoney(owed)} — not the PO total.`
+        : `Everything we ordered arrived. The amount to pay is ${fmtMoney(owed)}.`,
+      ``,
+      `What arrived:`,
       ...receivedLines.map(line),
+      ...(short ? [
+        ``,
+        `NOT delivered — please don't pay for these:`,
+        ...missingLines.map(line),
+      ] : []),
       ``,
-      ...(missingLines.length
-        ? [`NOT delivered (do not pay for these):`, ...missingLines.map(line), ``] : []),
-      `  Received subtotal:  ${fmtMoney(received).padStart(12)}`,
-      `  Tax (${(vendor.tax_rate * 100).toFixed(2)}%):        ${fmtMoney(tax).padStart(12)}`,
-      `  AMOUNT TO PAY:      ${fmtMoney(owed).padStart(12)}`,
+      `  ${'Received subtotal:'.padEnd(20)}${fmtMoney(received).padStart(11)}`,
+      `  ${`Tax (${(vendor.tax_rate * 100).toFixed(2)}%):`.padEnd(20)}${fmtMoney(tax).padStart(11)}`,
+      `  ${'AMOUNT TO PAY:'.padEnd(20)}${fmtMoney(owed).padStart(11)}`,
       ``,
-      `  Original PO total:  ${fmtMoney(po.total).padStart(12)}`,
-      `  Variance:           ${fmtMoney(variance).padStart(12)}${variance !== 0 ? '  <-- check before paying' : ''}`,
+      `  ${'Original PO total:'.padEnd(20)}${fmtMoney(po.total).padStart(11)}`,
+      `  ${'Difference:'.padEnd(20)}${fmtMoney(variance).padStart(11)}${variance !== 0 ? '   <- worth a look before paying' : ''}`,
+      ``,
+      short
+        ? `I've asked ${vendor.contact_name || vendor.name} about the missing items and will let you know whether they're backordered or credited.`
+        : `Nothing outstanding on this one.`,
+      ...signature(sender, hallName),
     ].join('\n'),
     amount: owed,
   };

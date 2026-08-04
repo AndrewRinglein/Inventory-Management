@@ -26,7 +26,7 @@ export default function Review() {
       seq = r.seq;
       return { ...d, num: r.num, sent_at: new Date().toISOString() };
     });
-    return { numbered, list: buildOrderEmails(numbered, vendors, hallName, hallAddress, accounting) };
+    return { numbered, list: buildOrderEmails(numbered, vendors, hallName, hallAddress, accounting, settings.sender || {}) };
   }, [drafts, settings, hall, vendors]);   // eslint-disable-line
 
   const view = (i) => {
@@ -57,7 +57,7 @@ export default function Review() {
       await reloadSettings();
       const finalEmails = buildOrderEmails(
         numbered.map((d, i) => ({ ...d, sent_at: pos[i]?.sent_at })),
-        vendors, hallName, hallAddress, accounting
+        vendors, hallName, hallAddress, accounting, settings.sender || {}
       ).map((e, i) => ({ ...e, ...(edits[i] || {}) }));
       await store.sendEmails(finalEmails, hall);
       setToast(IS_DEMO

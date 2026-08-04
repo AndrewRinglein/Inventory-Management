@@ -140,8 +140,10 @@ export default function Receiving() {
       // build the two follow-up emails for review
       const v = vmap[cur.vendor_id];
       const emails = [];
-      if (missingLines.length) emails.push(buildShortageEmail(cur, v, HALL_NAMES[hall], missingLines));
-      const delivered = buildDeliveredEmail(cur, v, HALL_NAMES[hall], invoiceNo, receivedLines, missingLines);
+      const sender = settings.sender || {};
+      const acctName = settings.email?.accountingName || '';
+      if (missingLines.length) emails.push(buildShortageEmail(cur, v, HALL_NAMES[hall], missingLines, sender));
+      const delivered = buildDeliveredEmail(cur, v, HALL_NAMES[hall], invoiceNo, receivedLines, missingLines, sender, acctName);
       delivered.to = settings.email?.accountingAddress || '(accounting address not set)';
       emails.push(delivered);
       await store.addPayment({

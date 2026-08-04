@@ -41,9 +41,10 @@ const products = [
   { id: 'P4', vendor_id: 'md', name: 'Fat Kitty', cost: 89.1, tickets: null, price_per_ticket: 1, type: 'flash' },
 ];
 const vendors = [
-  { id: 'bv', name: 'Bingo Vision', email: 'bv@x.com', tax_rate: 0.0975 },
-  { id: 'md', name: 'Marathon', email: 'md@x.com', tax_rate: 0.0975 },
+  { id: 'bv', name: 'Bingo Vision', email: 'bv@x.com', contact_name: 'Scott', tax_rate: 0.0975 },
+  { id: 'md', name: 'Marathon', email: 'md@x.com', contact_name: 'Esteban', tax_rate: 0.0975 },
 ];
+const SENDER = { name: 'Sagit', org: 'Vanguard' };
 
 test('buildDrafts groups by vendor, skips zero qty, locks prices', () => {
   const drafts = buildDrafts({ P1: 2, P2: 0, P3: 1 }, products, vendors);
@@ -123,12 +124,32 @@ test('resolver: soldout requires opened first', () => {
 // ---------- emails ----------
 test('order run builds one vendor email per PO (accounting not copied on POs)', () => {
   const pos = [{ num: 'SC-2026-08-BV-001', vendor_id: 'bv', lines: [{ qty: 2, name_snapshot: 'Big Fish (1995/$1)', cost: 117.3 }], subtotal: 234.6, tax: 22.87, total: 257.47 }];
-  const emails = buildOrderEmails(pos, vendors, 'Santa Clara', '123 Main St', 'acct@hall.com');
+  const emails = buildOrderEmails(pos, vendors, 'Santa Clara', '123 Main St', 'acct@hall.com', SENDER);
   assert.equal(emails.length, 1);
   assert.equal(emails[0].kind, 'po');
   assert.equal(emails[0].to, 'bv@x.com');
   assert.ok(!emails.some((e) => e.to === 'acct@hall.com'), 'accounting must not be on PO emails');
-  assert.match(emails[0].body, /TOTAL:.*\$257\.47/s);
+  assert.match(emails[0].body, /Total:.*\$257\.47/s);
+});
+
+// ---------- the human layer ----------
+test('PO email greets the vendor contact and is signed by a named person', () => {
+  const pos = [{ num: 'SC-1', vendor_id: 'bv', lines: [{ qty: 1, name_snapshot: 'A', cost: 10 }], subtotal: 10, tax: 1, total: 11 }];
+  const [e] = buildOrderEmails(pos, vendors, 'Santa Clara', '123 Main St', '', SENDER);
+  assert.ok(e.body.startsWith('Hi Scott,'), 'must open with a greeting');
+  assert.match(e.body, /Thanks,\nSagit/, 'must be signed by the sender');
+  assert.match(e.body, /Vanguard/);
+  assert.ok(!/\bPURCHASE ORDER\b/.test(e.body), 'should not read like a machine dump');
+  assert.match(e.subject, /Santa Clara order/);
+});
+
+test('emails degrade gracefully with no contact name or sender configured', () => {
+  const anon = [{ id: 'bv', name: 'Bingo Vision', email: 'bv@x.com', tax_rate: 0.0975 }];
+  const pos = [{ num: 'SC-1', vendor_id: 'bv', lines: [{ qty: 1, name_snapshot: 'A', cost: 10 }], subtotal: 10, tax: 1, total: 11 }];
+  const [e] = buildOrderEmails(pos, anon, 'Santa Clara', '', '');
+  assert.ok(e.body.startsWith('Hello,'), 'falls back to a neutral greeting');
+  assert.match(e.body, /The inventory team/, 'falls back to a neutral signature');
+  assert.ok(!e.body.includes('undefined') && !e.body.includes('null'));
 });
 
 test('two vendors -> two PO emails, still no accounting copies', () => {
@@ -136,7 +157,7 @@ test('two vendors -> two PO emails, still no accounting copies', () => {
     { num: 'SC-1', vendor_id: 'bv', lines: [{ qty: 1, name_snapshot: 'A', cost: 10 }], subtotal: 10, tax: 1, total: 11 },
     { num: 'SC-2', vendor_id: 'md', lines: [{ qty: 1, name_snapshot: 'B', cost: 20 }], subtotal: 20, tax: 2, total: 22 },
   ];
-  const emails = buildOrderEmails(pos, vendors, 'Santa Clara', '', 'acct@hall.com');
+  const emails = buildOrderEmails(pos, vendors, 'Santa Clara', '', 'acct@hall.com', SENDER);
   assert.equal(emails.length, 2);
   assert.deepEqual(emails.map((e) => e.to).sort(), ['bv@x.com', 'md@x.com']);
 });
@@ -145,14 +166,35 @@ test('delivered email computes pay amount from received only, flags variance', (
   const po = { num: 'SC-1', total: 257.47, lines: [] };
   const received = [{ qty: 1, name_snapshot: 'Big Fish (1995/$1)', cost: 117.3 }];
   const missing = [{ qty: 1, name_snapshot: 'Big Fish (1995/$1)', cost: 117.3 }];
-  const e = buildDeliveredEmail(po, vendors[0], 'Santa Clara', 'INV-9', received, missing);
+  const e = buildDeliveredEmail(po, vendors[0], 'Santa Clara', 'INV-9', received, missing, SENDER, 'Jamie');
   assert.equal(e.amount, Math.round(117.3 * 1.0975 * 100) / 100);
-  assert.match(e.subject, /SHORT DELIVERY/);
-  assert.match(e.body, /do not pay/);
+  assert.match(e.subject, /short delivery/i);
+  assert.match(e.subject, /Pay \$128\.74/, 'subject states the amount to pay');
+  assert.match(e.body, /don't pay for these/);
+  assert.ok(e.body.startsWith('Hi Jamie,'));
+  assert.match(e.body, /Thanks,\nSagit/);
+});
+
+test('fully-delivered email says so plainly and has no short-pay warning', () => {
+  const po = { num: 'SC-1', total: 128.73, lines: [] };
+  const e = buildDeliveredEmail(po, vendors[0], 'Santa Clara', 'INV-9',
+    [{ qty: 1, name_snapshot: 'Big Fish', cost: 117.3 }], [], SENDER, 'Jamie');
+  assert.ok(!/short/i.test(e.subject));
+  assert.match(e.body, /Everything we ordered arrived/);
+  assert.ok(!e.body.includes("don't pay for these"));
 });
 
 test('shortage email lists missing value', () => {
-  const e = buildShortageEmail({ num: 'SC-1' }, vendors[0], 'SC', [{ qty: 2, name_snapshot: 'X', cost: 50 }]);
+  const e = buildShortageEmail({ num: 'SC-1' }, vendors[0], 'SC', [{ qty: 2, name_snapshot: 'X', cost: 50 }], SENDER);
   assert.match(e.body, /\$100\.00/);
-  assert.match(e.subject, /Short delivery/);
+  assert.match(e.subject, /Missing items/);
+  assert.ok(e.body.startsWith('Hi Scott,'));
+  assert.match(e.body, /2 items were missing/, 'plural phrasing');
+  assert.match(e.body, /backorder/);
+});
+
+test('shortage email uses singular phrasing for one missing item', () => {
+  const e = buildShortageEmail({ num: 'SC-1' }, vendors[0], 'SC', [{ qty: 1, name_snapshot: 'X', cost: 50 }], SENDER);
+  assert.match(e.body, /one item was missing/);
+  assert.match(e.body, /whether it's coming/);
 });
