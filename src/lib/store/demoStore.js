@@ -250,6 +250,7 @@ function stagedSeed() {
           session_tag: l.tags?.[i] || null,
           ordered_at: daysAgo(sentDays, 2),
           received_at: received ? daysAgo(sentDays - 3) : null,
+          opened_session: st === 'opened' || st === 'sold_out' ? 'Friday' : null,
           opened_at: st === 'opened' || st === 'sold_out' ? daysAgo(sentDays - 5) : null,
           sold_out_at: st === 'sold_out' ? daysAgo(sentDays - 7 < 0 ? 0 : sentDays - 7) : null,
         });

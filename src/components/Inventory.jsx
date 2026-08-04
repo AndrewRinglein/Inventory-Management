@@ -3,10 +3,7 @@ import { AppCtx } from '../App.jsx';
 import { fmtMoney } from '../lib/logic/po.js';
 import { countByProduct } from '../lib/logic/boxes.js';
 
-export const SESSIONS = [
-  'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
-  'Saturday Afternoon', 'Saturday Evening', 'Sunday Afternoon', 'Sunday Evening',
-];
+import { SESSIONS } from '../lib/sessions.js';
 
 const COLS = [
   { key: 'vendor', label: 'Vendor' }, { key: 'type', label: 'Type' },
@@ -17,7 +14,7 @@ const COLS = [
 ];
 
 export default function Inventory() {
-  const { hall, products, vendors, boxes, store, reloadHall, setToast, can } = useContext(AppCtx);
+  const { hall, products, vendors, boxes, store, reloadHall, setToast, can, openSession } = useContext(AppCtx);
   const editable = can('boxes');
   const [q, setQ] = useState('');
   const [sortKey, setSortKey] = useState('name');
@@ -74,10 +71,15 @@ export default function Inventory() {
   const openOne = async (row) => {
     const pool = boxes.filter((b) => b.product_id === row.p.id && b.state === 'in_inventory');
     if (!pool.length) { setToast('No boxes in stock for this game'); return; }
-    const box = pool.find((b) => !b.session_tag) || pool[0];
+    const box = pool.find((b) => b.session_tag === openSession) || pool.find((b) => !b.session_tag) || pool[0];
+    await store.updateBox(box.id, { opened_session: openSession });
     await store.transitionBox(box.id, 'opened');
     await reloadHall();
-    setToast(`Opened — ${row.p.name}`, async () => { await store.transitionBox(box.id, 'in_inventory'); await reloadHall(); });
+    setToast(`Opened for ${openSession} — ${row.p.name}`, async () => {
+      await store.transitionBox(box.id, 'in_inventory');
+      await store.updateBox(box.id, { opened_session: null });
+      await reloadHall();
+    });
   };
 
   const doAssign = async () => {

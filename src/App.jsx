@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { store, IS_DEMO, IS_SANDBOX } from './lib/store/index.js';
 import { roleFromUrl, roleLink, can as roleCan, ROLES } from './lib/roles.js';
 import { createScanCapture, resolveScan, beep } from './lib/logic/scan.js';
+import { suggestSession } from './lib/sessions.js';
 import Login from './components/Login.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Dashboard from './components/Dashboard.jsx';
@@ -39,6 +40,7 @@ export default function App() {
   const [toast, setToastState] = useState(null);
   const [flash, setFlash] = useState(null);
   const [scanMode, setScanMode] = useState('off');       // off | open | soldout | receive
+  const [openSession, setOpenSession] = useState(() => suggestSession());
   const [receivingPo, setReceivingPo] = useState(null);  // po id selected on Receiving screen
   const [pinAsk, setPinAsk] = useState(null);            // {resolve}
   const pinOkRef = useRef(false);
@@ -113,7 +115,7 @@ export default function App() {
 
   // ---- scanner ----
   const scanCtxRef = useRef({});
-  scanCtxRef.current = { scanMode, screen, boxes, receivingPo, hall };
+  scanCtxRef.current = { scanMode, screen, boxes, receivingPo, hall, openSession };
 
   useEffect(() => {
     if (!session) return;
@@ -138,8 +140,10 @@ export default function App() {
       const pname = productName(b.product_id);
       try {
         if (res.action === 'open') {
+          const sess = scanCtxRef.current.openSession;
+          await store.updateBox(b.id, { opened_session: sess });
           await store.transitionBox(b.id, 'opened');
-          setToast(`Opened — ${pname}`, async () => { await store.transitionBox(b.id, 'in_inventory'); await reloadHall(); });
+          setToast(`Opened for ${sess} — ${pname}`, async () => { await store.transitionBox(b.id, 'in_inventory'); await store.updateBox(b.id, { opened_session: null }); await reloadHall(); });
         } else if (res.action === 'soldout') {
           await store.transitionBox(b.id, 'sold_out');
           setToast(`Sold out — ${pname}`, async () => { await store.transitionBox(b.id, 'opened'); await reloadHall(); });
@@ -169,7 +173,7 @@ export default function App() {
     role, roleLabel: ROLES[role].label, roleHome, can: canDo, readOnlyHall,
     vendors, products, boxes, pos, payments, orderQty, settings,
     reloadHall, reloadCatalog, reloadSettings,
-    setToast, requirePin, scanMode, setScanMode,
+    setToast, requirePin, scanMode, setScanMode, openSession, setOpenSession,
     receivingPo, setReceivingPo, productName,
   };
 

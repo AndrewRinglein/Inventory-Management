@@ -1,8 +1,9 @@
 import React, { useContext, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
+import { SESSIONS } from '../lib/sessions.js';
 
 export default function OpenBoxes() {
-  const { hall, boxes, products, store, reloadHall, setToast, scanMode, setScanMode, productName, can } = useContext(AppCtx);
+  const { hall, boxes, products, store, reloadHall, setToast, scanMode, setScanMode, productName, can, openSession, setOpenSession } = useContext(AppCtx);
   const [lookup, setLookup] = useState('');
   const editable = can('boxes');
 
@@ -32,7 +33,9 @@ export default function OpenBoxes() {
     const b = boxes.find((x) => x.serial === code);
     if (!b) { setToast(`Serial "${code}" not found in this hall`); return; }
     if (b.state === 'in_inventory') {
-      store.transitionBox(b.id, 'opened').then(() => { reloadHall(); setToast(`Opened — ${productName(b.product_id)}`); });
+      store.updateBox(b.id, { opened_session: openSession })
+        .then(() => store.transitionBox(b.id, 'opened'))
+        .then(() => { reloadHall(); setToast(`Opened for ${openSession} — ${productName(b.product_id)}`); });
     } else if (b.state === 'opened') {
       store.transitionBox(b.id, 'sold_out').then(() => { reloadHall(); setToast(`Sold out — ${productName(b.product_id)}`); });
     } else {
@@ -57,6 +60,12 @@ export default function OpenBoxes() {
       </div>
       <div className="card pad" style={{ marginBottom: 14, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         {editable ? (<>
+          <div className="field" style={{ margin: 0 }}>
+            <label>Opening for session</label>
+            <select value={openSession} onChange={(e) => setOpenSession(e.target.value)} style={{ fontWeight: 600 }}>
+              {SESSIONS.map((sn) => <option key={sn} value={sn}>{sn}</option>)}
+            </select>
+          </div>
           <ModeBtn id="open" label="📦 Open-box scan" cls="orange" />
           <ModeBtn id="soldout" label="💰 Sold-out scan" cls="green" />
         </>) : <span className="dimmer" style={{ fontSize: 12.5 }}>Read-only for your role — scanning and status changes disabled.</span>}
@@ -73,14 +82,14 @@ export default function OpenBoxes() {
         </div>
         <table className="tbl">
           <thead><tr>
-            <th className="first">Game</th><th>Serial</th><th>Set aside</th><th>Opened</th><th className="last r" style={{ width: 210 }} />
+            <th className="first">Game</th><th>Serial</th><th>Session</th><th>Opened</th><th className="last r" style={{ width: 210 }} />
           </tr></thead>
           <tbody>
             {opened.map((b) => (
               <tr key={b.id}>
                 <td className="first">{productName(b.product_id)}</td>
                 <td className="mono dim">{b.serial || '—'}</td>
-                <td style={{ fontSize: 11, color: 'var(--green)' }}>{b.session_tag || '—'}</td>
+                <td style={{ fontSize: 11, color: 'var(--green)' }}>{b.opened_session || b.session_tag || '—'}</td>
                 <td className="dimmer" style={{ fontSize: 12 }}>
                   {b.opened_at ? new Date(b.opened_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''}
                 </td>
