@@ -74,7 +74,7 @@ export default function App() {
   }, []);
 
   const reloadSettings = useCallback(async () => {
-    const keys = ['email', 'po_sequence', 'admin_pin', 'halls_config'];
+    const keys = ['email', 'po_sequence', 'admin_pin', 'halls_config', 'eom'];
     const entries = await Promise.all(keys.map(async (k) => [k, await store.getSetting(k)]));
     setSettings(Object.fromEntries(entries));
   }, []);

@@ -124,6 +124,9 @@ export class SupabaseStore {
   }
   async setSetting(key, value) { ok(await this.sb.from('settings').upsert({ key, value })); }
   async getEvents(limit = 200) { return ok(await this.sb.from('events').select('*').order('at', { ascending: false }).limit(limit)); }
+  async logEvent(kind, entity, entity_id, detail = {}) {
+    ok(await this.sb.from('events').insert({ kind, entity, entity_id, detail, actor: 'app' }));
+  }
 
   // ---- AI invoice/label reading via edge function ----
   async readInvoicePhoto(path) {

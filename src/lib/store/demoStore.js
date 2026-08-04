@@ -196,6 +196,7 @@ export class DemoStore {
   async getSetting(key) { return this.db.settings[key]; }
   async setSetting(key, value) { this.db.settings[key] = value; this._save(); }
   async getEvents(limit = 200) { return this.db.events.slice(0, limit); }
+  async logEvent(kind, entity, entity_id, detail = {}) { this._event(kind, entity, entity_id, detail); this._save(); }
 
   // ---- AI (demo stub: reads nothing, explains itself) ----
   async readInvoicePhoto() {

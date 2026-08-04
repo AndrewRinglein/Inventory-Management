@@ -5,8 +5,17 @@ import { fmtMoney } from '../lib/logic/po.js';
 const HALL_NAMES = { sc: 'Santa Clara', rwc: 'Redwood City' };
 
 export default function Dashboard() {
-  const { hall, boxes, pos, payments, products, setScreen, store } = useContext(AppCtx);
+  const { hall, boxes, pos, payments, products, setScreen, store, settings, reloadSettings, setToast, can } = useContext(AppCtx);
   const [events, setEvents] = useState([]);
+  const lastEom = settings.eom?.[hall];
+  const markEom = async () => {
+    const now = new Date().toISOString();
+    await store.setSetting('eom', { ...(settings.eom || {}), [hall]: now });
+    await store.logEvent('eom', 'halls', hall, { label: `${HALL_NAMES[hall]} EOM updated` });
+    await reloadSettings();
+    setEvents(await store.getEvents(12));
+    setToast(`${HALL_NAMES[hall]} EOM marked complete`);
+  };
   useEffect(() => { store.getEvents(12).then(setEvents); }, [boxes, pos]);   // eslint-disable-line
 
   const live = boxes.filter((b) => b.state === 'in_inventory' || b.state === 'opened');
@@ -21,6 +30,10 @@ export default function Dashboard() {
         <div className="h1">Dashboard — {HALL_NAMES[hall]}</div>
         <div className="grow" />
         <span className="dimmer" style={{ fontSize: 12.5 }}>{products.length} products · 4 vendors</span>
+        <span className="dim" style={{ fontSize: 12.5 }}>
+          Last EOM: <b>{lastEom ? new Date(lastEom).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'never'}</b>
+        </span>
+        {can('boxes') && <button className="btn ghost sm" onClick={markEom} title="Record that the end-of-month inventory check for this hall is done">✓ Mark EOM done</button>}
       </div>
       <div className="stat-grid">
         <div className="card pad stat"><label>Live inventory value</label><div className="v">{fmtMoney(liveVal)}</div><div className="s">{live.length} boxes owned</div></div>
@@ -51,8 +64,10 @@ export default function Dashboard() {
             {events.map((e, i) => (
               <div key={i} style={{ padding: '8px 16px', borderBottom: '1px solid var(--border-lt)', fontSize: 12.5 }}>
                 <span className="dimmer mono" style={{ fontSize: 11 }}>{new Date(e.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>{' '}
-                <span className="badge b-teal" style={{ margin: '0 6px' }}>{e.kind}</span>
-                <span className="dim">{e.entity} {String(e.entity_id).slice(0, 14)}</span>
+                <span className={'badge ' + (e.kind === 'eom' ? 'b-green' : 'b-teal')} style={{ margin: '0 6px' }}>{e.kind === 'eom' ? 'EOM' : e.kind}</span>
+                {e.detail?.label
+                  ? <b style={{ color: 'var(--green)' }}>{e.detail.label}</b>
+                  : <span className="dim">{e.entity} {String(e.entity_id).slice(0, 14)}</span>}
               </div>
             ))}
           </div>
