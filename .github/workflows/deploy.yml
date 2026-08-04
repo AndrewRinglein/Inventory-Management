@@ -26,7 +26,7 @@ jobs:
         env:
           VITE_SUPABASE_URL: https://lkcfbgnuodqzvowschjn.supabase.co
           VITE_SUPABASE_ANON_KEY: sb_publishable_t3vO3q1Y7PRH3qVp_64dfg_L4Zr1fIT
-          BASE_PATH: /bingo-inventory/
+          BASE_PATH: /Inventory-Management/
       - uses: actions/upload-pages-artifact@v3
         with: { path: dist }
   deploy:
