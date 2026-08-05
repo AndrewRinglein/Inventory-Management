@@ -26,8 +26,9 @@ Deno.serve(async (req) => {
     const senderName = [sender?.name, sender?.org].filter(Boolean).join(' — ').trim();
     const from = senderName ? `${senderName} <${fromAddr}>` : fromAddr;
     const replyTo = (sender?.replyTo || '').trim();
-    // ccAddress gets a copy of every outgoing email (oversight during rollout)
-    const cc = (settings?.ccAddress || '').trim();
+    // ccAddress may list several addresses, comma- or semicolon-separated
+    const ccList: string[] = String(settings?.ccAddress || '')
+      .split(/[,;]/).map((a) => a.trim()).filter(Boolean);
 
     const logs = [];
     for (const e of emails) {
@@ -47,8 +48,9 @@ Deno.serve(async (req) => {
           subject: (testMode ? '[TEST] ' : '') + e.subject,
           text: e.body + (testMode ? `\n\n--- TEST MODE: would have gone to ${e.to} ---` : ''),
         };
-        // don't CC when test mode already routes everything to one inbox, or if cc == recipient
-        if (cc && !testMode && cc.toLowerCase() !== to.toLowerCase()) payload.cc = [cc];
+        // don't CC in test mode (everything already goes to one inbox), and never CC the recipient
+        const cc = testMode ? [] : ccList.filter((a) => a.toLowerCase() !== to.toLowerCase());
+        if (cc.length) payload.cc = cc;
         if (replyTo) payload.reply_to = [replyTo];
         const r = await fetch('https://api.resend.com/emails', {
           method: 'POST',

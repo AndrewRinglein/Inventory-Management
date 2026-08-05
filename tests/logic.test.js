@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { poTotals, nextPoNum, buildDrafts, lineName, round2, packingLine } from '../src/lib/logic/po.js';
 import { canTransition, transition, countByProduct } from '../src/lib/logic/boxes.js';
 import { resolveScan } from '../src/lib/logic/scan.js';
-import { buildOrderEmails, buildDeliveredEmail, buildShortageEmail } from '../src/lib/logic/emails.js';
+import { buildOrderEmails, buildDeliveredEmail, buildShortageEmail, senderFor } from '../src/lib/logic/emails.js';
 
 // ---------- PO math ----------
 test('poTotals matches spreadsheet math (9.75% tax)', () => {
@@ -205,6 +205,37 @@ test('two vendors -> two PO emails, still no accounting copies', () => {
   const emails = buildOrderEmails(pos, vendors, 'Santa Clara', '', 'acct@hall.com', SENDER);
   assert.equal(emails.length, 2);
   assert.deepEqual(emails.map((e) => e.to).sort(), ['bv@x.com', 'md@x.com']);
+});
+
+// ---------- per-hall sender ----------
+const SENDERS = {
+  sc: { name: 'Sagit', org: 'Vanguard' },
+  rwc: { name: 'Shelly', org: 'Vanguard' },
+};
+
+test('each hall signs with its own person', () => {
+  assert.equal(senderFor(SENDERS, 'sc').name, 'Sagit');
+  assert.equal(senderFor(SENDERS, 'rwc').name, 'Shelly');
+});
+
+test('Redwood City POs are signed by Shelly, Santa Clara by Sagit', () => {
+  const pos = [{ num: 'RWC-1', vendor_id: 'bv', lines: [{ qty: 1, name_snapshot: 'A', cost: 10 }], subtotal: 10, tax: 1, total: 11 }];
+  const [rwc] = buildOrderEmails(pos, vendors, 'Redwood City', '', '', senderFor(SENDERS, 'rwc'));
+  assert.match(rwc.body, /Thanks,\nShelly/);
+  assert.ok(!rwc.body.includes('Sagit'));
+  const [sc] = buildOrderEmails([{ ...pos[0], num: 'SC-1' }], vendors, 'Santa Clara', '', '', senderFor(SENDERS, 'sc'));
+  assert.match(sc.body, /Thanks,\nSagit/);
+});
+
+test('senderFor accepts the older flat shape for every hall', () => {
+  const flat = { name: 'Sagit', org: 'Vanguard' };
+  assert.equal(senderFor(flat, 'rwc').name, 'Sagit');
+  assert.equal(senderFor(flat, 'sc').name, 'Sagit');
+});
+
+test('senderFor degrades to an empty object when unset', () => {
+  assert.deepEqual(senderFor(undefined, 'sc'), {});
+  assert.deepEqual(senderFor({}, 'sc'), {});
 });
 
 test('delivered email computes pay amount from received only, flags variance', () => {

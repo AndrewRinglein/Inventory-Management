@@ -2,6 +2,7 @@
 // Activated automatically when VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are set in .env.
 
 import { createClient } from '@supabase/supabase-js';
+import { senderFor } from '../logic/emails.js';
 
 const ok = ({ data, error }) => { if (error) throw new Error(error.message); return data; };
 
@@ -109,7 +110,8 @@ export class SupabaseStore {
 
   // ---- emails: real sending via the send-email edge function ----
   async sendEmails(list, hallId) {
-    const [settings, sender] = await Promise.all([this.getSetting('email'), this.getSetting('sender')]);
+    const [settings, allSenders] = await Promise.all([this.getSetting('email'), this.getSetting('sender')]);
+    const sender = senderFor(allSenders, hallId);
     const { data, error } = await this.sb.functions.invoke('send-email', {
       body: { emails: list, hall_id: hallId, settings, sender },
     });

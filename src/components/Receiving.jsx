@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useMemo, useState, useRef } from 'react';
 import { AppCtx } from '../App.jsx';
 import { fmtMoney } from '../lib/logic/po.js';
-import { buildShortageEmail, buildDeliveredEmail } from '../lib/logic/emails.js';
+import { buildShortageEmail, buildDeliveredEmail, senderFor } from '../lib/logic/emails.js';
 
 const HALL_NAMES = { sc: 'Santa Clara', rwc: 'Redwood City' };
 
@@ -249,7 +249,7 @@ export default function Receiving() {
       // build the two follow-up emails for review
       const v = vmap[cur.vendor_id];
       const emails = [];
-      const sender = settings.sender || {};
+      const sender = senderFor(settings.sender, hall);
       const acctName = settings.email?.accountingName || '';
       if (missingLines.length) emails.push(buildShortageEmail(cur, v, HALL_NAMES[hall], missingLines, sender));
       const delivered = buildDeliveredEmail(cur, v, HALL_NAMES[hall], invoiceNo, receivedLines, missingLines, sender, acctName);

@@ -1,7 +1,7 @@
 import React, { useContext, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
 import { buildDrafts, nextPoNum, fmtMoney } from '../lib/logic/po.js';
-import { buildOrderEmails } from '../lib/logic/emails.js';
+import { buildOrderEmails, senderFor } from '../lib/logic/emails.js';
 
 const HALL_NAMES = { sc: 'Santa Clara', rwc: 'Redwood City' };
 
@@ -26,7 +26,7 @@ export default function Review() {
       seq = r.seq;
       return { ...d, num: r.num, sent_at: new Date().toISOString() };
     });
-    return { numbered, list: buildOrderEmails(numbered, vendors, hallName, hallAddress, accounting, settings.sender || {}) };
+    return { numbered, list: buildOrderEmails(numbered, vendors, hallName, hallAddress, accounting, senderFor(settings.sender, hall)) };
   }, [drafts, settings, hall, vendors]);   // eslint-disable-line
 
   const view = (i) => {
@@ -57,7 +57,7 @@ export default function Review() {
       await reloadSettings();
       const finalEmails = buildOrderEmails(
         numbered.map((d, i) => ({ ...d, sent_at: pos[i]?.sent_at })),
-        vendors, hallName, hallAddress, accounting, settings.sender || {}
+        vendors, hallName, hallAddress, accounting, senderFor(settings.sender, hall)
       ).map((e, i) => ({ ...e, ...(edits[i] || {}) }));
       await store.sendEmails(finalEmails, hall);
       setToast(IS_DEMO

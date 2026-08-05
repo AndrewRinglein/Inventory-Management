@@ -10,6 +10,7 @@ export default function SettingsScreen() {
   const [pin, setPin] = useState('');
   const [vend, setVend] = useState(null);
   const [sender, setSender] = useState(null);
+  const [senderHall, setSenderHall] = useState('sc');
 
   useEffect(() => {
     (async () => { setUnlocked(await requirePin()); })();
@@ -19,7 +20,12 @@ export default function SettingsScreen() {
     setEmail(settings.email || { testMode: true, testAddress: '', fromAddress: '', accountingAddress: '' });
     setHalls(settings.halls_config || { sc: { address: '' }, rwc: { address: '' } });
     setVend(Object.fromEntries(vendors.map((v) => [v.id, { email: v.email || '', contact_name: v.contact_name || '' }])));
-    setSender(settings.sender || { name: '', org: '', title: '', phone: '', replyTo: '' });
+    const raw = settings.sender || {};
+    const blank = { name: '', org: '', title: '', phone: '', replyTo: '' };
+    // normalise the legacy flat shape into per-hall entries
+    setSender((raw.name || raw.org)
+      ? { sc: { ...blank, ...raw }, rwc: { ...blank, ...raw } }
+      : { sc: { ...blank, ...(raw.sc || {}) }, rwc: { ...blank, ...(raw.rwc || {}) } });
   }, [settings, vendors]);
 
   if (!unlocked) return <div className="card pad dimmer">Settings are PIN-protected.</div>;
@@ -59,22 +65,28 @@ export default function SettingsScreen() {
       <div className="two-col">
         <div>
           <div className="card pad" style={{ marginBottom: 14 }}>
-            <b style={{ fontSize: 13.5 }}>Who the emails come from</b>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <b style={{ fontSize: 13.5 }}>Who the emails come from</b>
+              <div className="hall-switch" style={{ margin: 0, width: 220 }}>
+                <button type="button" className={senderHall === 'sc' ? 'on' : ''} onClick={() => setSenderHall('sc')}>Santa Clara</button>
+                <button type="button" className={senderHall === 'rwc' ? 'on' : ''} onClick={() => setSenderHall('rwc')}>Redwood City</button>
+              </div>
+            </div>
             <p className="muted-note" style={{ marginTop: 2, marginBottom: 8 }}>
-              Vendors see this name in their inbox and in the signature — emails should come from a person, not a system.
+              Each hall's orders come from its own person. Vendors see this name in their inbox and in the signature.
             </p>
             <div style={{ display: 'flex', gap: 10 }}>
-              <div style={{ flex: 1 }}><Row label="Name"><input type="text" placeholder="Sagit" value={sender.name || ''} onChange={(e) => setSender({ ...sender, name: e.target.value })} style={{ width: '100%' }} /></Row></div>
-              <div style={{ flex: 1 }}><Row label="Organization"><input type="text" placeholder="Vanguard" value={sender.org || ''} onChange={(e) => setSender({ ...sender, org: e.target.value })} style={{ width: '100%' }} /></Row></div>
+              <div style={{ flex: 1 }}><Row label="Name"><input type="text" placeholder="Sagit" value={sender[senderHall].name || ''} onChange={(e) => setSender({ ...sender, [senderHall]: { ...sender[senderHall], name: e.target.value } })} style={{ width: '100%' }} /></Row></div>
+              <div style={{ flex: 1 }}><Row label="Organization"><input type="text" placeholder="Vanguard" value={sender[senderHall].org || ''} onChange={(e) => setSender({ ...sender, [senderHall]: { ...sender[senderHall], org: e.target.value } })} style={{ width: '100%' }} /></Row></div>
             </div>
             <div style={{ display: 'flex', gap: 10 }}>
-              <div style={{ flex: 1 }}><Row label="Title (optional)"><input type="text" value={sender.title || ''} onChange={(e) => setSender({ ...sender, title: e.target.value })} style={{ width: '100%' }} /></Row></div>
-              <div style={{ flex: 1 }}><Row label="Phone (optional)"><input type="text" value={sender.phone || ''} onChange={(e) => setSender({ ...sender, phone: e.target.value })} style={{ width: '100%' }} /></Row></div>
+              <div style={{ flex: 1 }}><Row label="Title (optional)"><input type="text" value={sender[senderHall].title || ''} onChange={(e) => setSender({ ...sender, [senderHall]: { ...sender[senderHall], title: e.target.value } })} style={{ width: '100%' }} /></Row></div>
+              <div style={{ flex: 1 }}><Row label="Phone (optional)"><input type="text" value={sender[senderHall].phone || ''} onChange={(e) => setSender({ ...sender, [senderHall]: { ...sender[senderHall], phone: e.target.value } })} style={{ width: '100%' }} /></Row></div>
             </div>
             <Row label="Reply-to address (where vendor replies should land)">
-              <input type="email" value={sender.replyTo || ''} onChange={(e) => setSender({ ...sender, replyTo: e.target.value })} style={{ width: '100%' }} /></Row>
+              <input type="email" value={sender[senderHall].replyTo || ''} onChange={(e) => setSender({ ...sender, [senderHall]: { ...sender[senderHall], replyTo: e.target.value } })} style={{ width: '100%' }} /></Row>
             <p className="muted-note">
-              Emails will appear as: <b>{[sender.name, sender.org].filter(Boolean).join(' — ') || '(no name set)'}</b> &lt;{email.fromAddress || 'not set'}&gt;
+              Emails will appear as: <b>{[sender[senderHall].name, sender[senderHall].org].filter(Boolean).join(' — ') || '(no name set)'}</b> &lt;{email.fromAddress || 'not set'}&gt;
             </p>
           </div>
           <div className="card pad" style={{ marginBottom: 14 }}>
@@ -88,7 +100,7 @@ export default function SettingsScreen() {
                 <div style={{ flex: 1 }}><Row label="Their first name">
                   <input type="text" placeholder="Jamie" value={email.accountingName || ''} onChange={(e) => setEmail({ ...email, accountingName: e.target.value })} style={{ width: '100%' }} /></Row></div>
               </div>
-              <Row label="CC on every email (oversight copy — applies when test mode is OFF)">
+              <Row label="CC on every email — separate several with commas (applies when test mode is OFF)">
                 <input type="email" value={email.ccAddress || ''} onChange={(e) => setEmail({ ...email, ccAddress: e.target.value })} style={{ width: '100%' }} /></Row>
               <Row label={<span><b>Test mode</b> — all emails go to this address instead of vendors</span>}>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

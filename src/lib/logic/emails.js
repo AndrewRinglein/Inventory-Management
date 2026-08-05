@@ -8,6 +8,17 @@
 
 import { fmtMoney } from './po.js';
 
+/**
+ * Each hall has its own person on the emails (Sagit for SC, Shelly for RWC).
+ * Accepts either the hall-keyed shape { sc: {...}, rwc: {...} } or the older
+ * flat { name, org, ... }, which applies to every hall.
+ */
+export function senderFor(sender, hallId) {
+  if (!sender || typeof sender !== 'object') return {};
+  if (sender.name || sender.org) return sender;          // legacy flat shape
+  return sender[hallId] || sender.default || {};
+}
+
 /** "Sagit" / "Sagit — Vanguard" for signatures and the From display name. */
 export function senderLabel(sender = {}) {
   const name = (sender.name || '').trim();

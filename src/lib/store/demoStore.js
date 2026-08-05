@@ -345,7 +345,10 @@ function seed() {
       admin_pin: { pin: '1234' },
       halls_config: { sc: { address: '' }, rwc: { address: '' } },
       demo_password: 'bingo',
-      sender: { name: 'Sagit', org: 'Vanguard', title: '', phone: '', replyTo: '' },
+      sender: {
+        sc: { name: 'Sagit', org: 'Vanguard', title: '', phone: '', replyTo: '' },
+        rwc: { name: 'Shelly', org: 'Vanguard', title: '', phone: '', replyTo: '' },
+      },
     },
   };
 }
