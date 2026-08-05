@@ -4,6 +4,7 @@ import { fmtMoney } from '../lib/logic/po.js';
 import { countByProduct } from '../lib/logic/boxes.js';
 
 import { SESSIONS } from '../lib/sessions.js';
+import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.js';
 
 const COLS = [
   { key: 'vendor', label: 'Vendor' }, { key: 'type', label: 'Type' },
@@ -17,6 +18,8 @@ export default function Inventory() {
   const { hall, products, vendors, boxes, store, reloadHall, setToast, can, openSession } = useContext(AppCtx);
   const editable = can('boxes');
   const [q, setQ] = useState('');
+  const [typeF, setTypeF] = useState('');
+  const [miscF, setMiscF] = useState('games');
   const [sortKey, setSortKey] = useState('name');
   const [dir, setDir] = useState(1);
   const [assignPid, setAssignPid] = useState(null);
@@ -33,6 +36,7 @@ export default function Inventory() {
       const c = cnt[p.id];
       if (!c || (!c.inv && !c.open && !c.onorder)) continue;
       if (q && !p.name.toLowerCase().includes(q.toLowerCase())) continue;
+      if (!passesFilters(p, { type: typeF, misc: miscF })) continue;
       const asg = {};
       for (const b of boxes) {
         if (b.product_id === p.id && b.state === 'in_inventory' && b.session_tag) {
@@ -60,7 +64,7 @@ export default function Inventory() {
     });
     out.totVal = totVal;
     return out;
-  }, [products, boxes, cnt, q, sortKey, dir, vmap]);
+  }, [products, boxes, cnt, q, typeF, miscF, sortKey, dir, vmap]);
 
   const sortBy = (k) => {
     if (k === sortKey) setDir(-dir);
@@ -106,6 +110,12 @@ export default function Inventory() {
     <div>
       <div className="page-head">
         <div className="h1">Inventory — {hall === 'sc' ? 'Santa Clara' : 'Redwood City'}</div>
+        <select value={typeF} onChange={(e) => setTypeF(e.target.value)} title="Game type">
+          {GAME_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+        </select>
+        <select value={miscF} onChange={(e) => setMiscF(e.target.value)} title="Cherry tickets and dauber supplies">
+          {MISC_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
         <div className="grow" />
         <span className="dim" style={{ fontSize: 13 }}>{rows.length} products with stock · owned value <b className="mono">{fmtMoney(rows.totVal)}</b></span>
       </div>

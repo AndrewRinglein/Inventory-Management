@@ -2,12 +2,15 @@ import React, { useContext, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
 import { fmtMoney, buildDrafts } from '../lib/logic/po.js';
 import { countByProduct } from '../lib/logic/boxes.js';
+import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.js';
 
 export default function Purchase() {
   const { hall, products, vendors, boxes, orderQty, store, reloadHall, setScreen, setToast, can } = useContext(AppCtx);
   const editable = can('order');
   const [vendorF, setVendorF] = useState('');
   const [q, setQ] = useState('');
+  const [typeF, setTypeF] = useState('');
+  const [miscF, setMiscF] = useState('games');
 
   const cnt = useMemo(() => countByProduct(boxes), [boxes]);
   const vmap = useMemo(() => Object.fromEntries(vendors.map((v) => [v.id, v])), [vendors]);
@@ -22,6 +25,7 @@ export default function Purchase() {
     .filter((p) => p.active !== false)
     .filter((p) => !vendorF || p.vendor_id === vendorF)
     .filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase()))
+    .filter((p) => passesFilters(p, { type: typeF, misc: miscF }) || (orderQty[p.id] || 0) > 0)
     .sort((a, b) => a.name.localeCompare(b.name));
 
   const setQty = async (pid, v) => {
@@ -38,7 +42,13 @@ export default function Purchase() {
           <option value="">All vendors</option>
           {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
         </select>
-        <input type="text" placeholder="Search game…" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 180 }} />
+        <select value={typeF} onChange={(e) => setTypeF(e.target.value)} title="Game type">
+          {GAME_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+        </select>
+        <select value={miscF} onChange={(e) => setMiscF(e.target.value)} title="Cherry tickets and dauber supplies">
+          {MISC_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
+        <input type="text" placeholder="Search game…" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 160 }} />
         <div className="grow" />
         <span className="dim" style={{ fontSize: 13 }}>
           {lineCount ? `${lineCount} lines` : 'Enter quantities to build an order'}

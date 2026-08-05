@@ -5,6 +5,7 @@ import { poTotals, nextPoNum, buildDrafts, lineName, round2, packingLine } from 
 import { canTransition, transition, countByProduct } from '../src/lib/logic/boxes.js';
 import { resolveScan } from '../src/lib/logic/scan.js';
 import { buildOrderEmails, buildDeliveredEmail, buildShortageEmail, senderFor } from '../src/lib/logic/emails.js';
+import { isMisc, passesFilters } from '../src/lib/logic/categories.js';
 
 // ---------- PO math ----------
 test('poTotals matches spreadsheet math (9.75% tax)', () => {
@@ -205,6 +206,43 @@ test('two vendors -> two PO emails, still no accounting copies', () => {
   const emails = buildOrderEmails(pos, vendors, 'Santa Clara', '', 'acct@hall.com', SENDER);
   assert.equal(emails.length, 2);
   assert.deepEqual(emails.map((e) => e.to).sort(), ['bv@x.com', 'md@x.com']);
+});
+
+// ---------- inventory filters ----------
+const FLASH  = { name: 'BIG FISH', type: 'flash' };
+const STRIP  = { name: 'Vanguard Strips', type: 'strip' };
+const PAPER  = { name: 'Red/White/Blue paper', type: 'paper' };
+const DAUBER = { name: '$2 DAUBERS — Blue', type: 'supply' };
+const CHERRY = { name: 'Cherry Ticket-- A Whole Lotta', type: 'flash' };
+
+test('misc = dauber supplies and cherry-ticket cases', () => {
+  assert.equal(isMisc(DAUBER), true);
+  assert.equal(isMisc(CHERRY), true, 'cherry cases are misc even though the type is flash');
+  assert.equal(isMisc(FLASH), false);
+  assert.equal(isMisc(STRIP), false);
+});
+
+test('games-only (the default) hides daubers and cherry', () => {
+  const opts = { misc: 'games' };
+  assert.ok(passesFilters(FLASH, opts) && passesFilters(STRIP, opts) && passesFilters(PAPER, opts));
+  assert.ok(!passesFilters(DAUBER, opts));
+  assert.ok(!passesFilters(CHERRY, opts));
+});
+
+test('include-all shows everything; misc-only shows just cherry and daubers', () => {
+  const all = { misc: 'all' };
+  assert.ok([FLASH, STRIP, PAPER, DAUBER, CHERRY].every((p) => passesFilters(p, all)));
+  const only = { misc: 'misc' };
+  assert.ok(passesFilters(DAUBER, only) && passesFilters(CHERRY, only));
+  assert.ok(!passesFilters(FLASH, only) && !passesFilters(STRIP, only));
+});
+
+test('type filter combines with the misc filter', () => {
+  assert.ok(passesFilters(FLASH, { type: 'flash', misc: 'games' }));
+  assert.ok(!passesFilters(STRIP, { type: 'flash', misc: 'games' }));
+  // cherry is type flash but still hidden in games-only
+  assert.ok(!passesFilters(CHERRY, { type: 'flash', misc: 'games' }));
+  assert.ok(passesFilters(CHERRY, { type: 'flash', misc: 'all' }));
 });
 
 // ---------- per-hall sender ----------
