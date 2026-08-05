@@ -493,8 +493,8 @@ test('the PO email prints ? and asks the vendor to fill the price in', () => {
   const [e] = buildOrderEmails([{ ...d, num: 'SC-2026-08-BV-001' }], TBD_VENDORS, 'Santa Clara', '', '', { name: 'Sagit' });
   assert.match(e.body, /New Game\s+\?\s+ea\s+=\s+\?/, 'both money columns read ? on that line');
   assert.match(e.body, /\$100\.00 ea/, 'the priced line still shows its price');
-  assert.match(e.body, /One item is marked "\?"/);
-  assert.match(e.body, /list price and put the figure on the invoice/);
+  assert.match(e.body, /Items below marked with a \? we don't have a current price\./);
+  assert.match(e.body, /send over pricing, we will update and resend same PO/);
   assert.match(e.body, /covers the priced lines only/);
 });
 
@@ -502,6 +502,6 @@ test('a fully priced PO email says nothing about missing prices', () => {
   const [d] = buildDrafts({ A: 2 }, TBD_PRODUCTS, TBD_VENDORS);
   const [e] = buildOrderEmails([{ ...d, num: 'SC-2026-08-BV-002' }], TBD_VENDORS, 'Santa Clara', '', '', { name: 'Sagit' });
   assert.ok(!/\?\s+ea/.test(e.body), 'no ? in the money column on a fully priced order');
-  assert.ok(!e.body.includes('is marked "?"'));
+  assert.ok(!e.body.includes("Items below marked with a ?"));
   assert.ok(!e.body.includes('covers the priced lines only'));
 });

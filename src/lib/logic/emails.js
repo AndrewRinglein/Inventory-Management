@@ -60,7 +60,7 @@ function poBody(po, vendor, hallName, hallAddress, sender) {
     ``,
     `Here's our next order for ${hallName}. Purchase order number is ${po.num}.`,
     n ? `` : null,
-    n ? `${n === 1 ? "One item is" : `${n} items are`} marked "?" below — ${n === 1 ? "it's" : "they're"} new to us and I don't have your current price. Please go ahead and send ${n === 1 ? 'it' : 'them'} at your list price and put the figure on the invoice; we'll match it. If anything has gone up a lot, give me a heads up first and I'll confirm before you ship.` : null,
+    n ? `Items below marked with a ? we don't have a current price. If you could send over pricing, we will update and resend same PO with those details.` : null,
     ``,
     ...po.lines.map(line),
     ``,
