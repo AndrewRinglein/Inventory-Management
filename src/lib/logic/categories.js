@@ -8,8 +8,19 @@ export const GAME_TYPES = [
   { value: '', label: 'All types' },
   { value: 'flash', label: 'Flash' },
   { value: 'strip', label: 'Strip' },
-  { value: 'guarantee', label: 'Guarantee' },
   { value: 'paper', label: 'Paper' },
+  { value: 'guarantee', label: 'Guarantee' },
+  { value: 'supply', label: 'Supply' },
+  { value: '_unset', label: 'Needs a type' },
+];
+
+/** The types a person can pick on a product row. */
+export const REAL_TYPES = [
+  { value: 'flash', label: 'flash' },
+  { value: 'strip', label: 'strip' },
+  { value: 'guarantee', label: 'guarantee' },
+  { value: 'paper', label: 'paper' },
+  { value: 'supply', label: 'supply' },
 ];
 
 export const MISC_MODES = [
@@ -31,6 +42,7 @@ export function passesFilters(p, { type = '', misc = 'games' } = {}) {
   const m = isMisc(p);
   if (misc === 'games' && m) return false;
   if (misc === 'misc' && !m) return false;
+  if (type === '_unset') return !p.type;
   if (type && p.type !== type) return false;
   return true;
 }

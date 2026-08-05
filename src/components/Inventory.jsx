@@ -5,6 +5,9 @@ import { countByProduct } from '../lib/logic/boxes.js';
 
 import { SESSIONS } from '../lib/sessions.js';
 import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.js';
+import { needsCost, needsType, needsTickets } from '../lib/logic/setup.js';
+
+const UPD = <span className="badge b-gold">update</span>;
 
 const COLS = [
   { key: 'vendor', label: 'Vendor' }, { key: 'type', label: 'Type' },
@@ -135,12 +138,15 @@ export default function Inventory() {
           <tbody>
             {rows.map((r) => (
               <tr key={r.p.id}>
-                <td className="first">{r.p.name}</td>
+                <td className="first">
+                  {r.p.name}
+                  {needsCost(r.p) && <span className="badge b-gold" style={{ marginLeft: 6 }} title="No unit cost — can't be ordered or received until set">can't order</span>}
+                </td>
                 <td className="dim" style={{ fontSize: 12 }}>{vmap[r.p.vendor_id]?.name}</td>
-                <td className="dimmer" style={{ fontSize: 12 }}>{r.p.type}</td>
-                <td className="r mono">{r.p.tickets ? r.p.tickets.toLocaleString() : '—'}</td>
+                <td className="dimmer" style={{ fontSize: 12 }}>{needsType(r.p) ? UPD : r.p.type}</td>
+                <td className="r mono">{needsTickets(r.p) ? UPD : (r.p.tickets ? r.p.tickets.toLocaleString() : '—')}</td>
                 <td className="r mono dim">${r.p.price_per_ticket || 1}</td>
-                <td className="r mono">{fmtMoney(r.p.cost)}</td>
+                <td className="r mono">{needsCost(r.p) ? UPD : fmtMoney(r.p.cost)}</td>
                 <td className="r mono"><b>{r.c.inv || 0}</b></td>
                 <td className="r mono" style={{ color: 'var(--orange)' }}>{r.c.open || 0}</td>
                 <td className="r mono dimmer">{r.c.onorder || 0}</td>

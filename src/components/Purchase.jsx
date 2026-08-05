@@ -3,6 +3,43 @@ import { AppCtx } from '../App.jsx';
 import { fmtMoney, buildDrafts } from '../lib/logic/po.js';
 import { countByProduct } from '../lib/logic/boxes.js';
 import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.js';
+import { needsSetup, needsCost, needsType, needsTickets, productsNeedingSetup } from '../lib/logic/setup.js';
+
+const UPD = <span className="badge b-gold">update</span>;
+
+const TIX_FILTERS = [
+  ['', 'All'], ['lt1000', '< 1,000'], ['1to2k', '1,000–1,999'],
+  ['2to3k', '2,000–2,999'], ['3kplus', '3,000 +'], ['none', 'Needs update'],
+];
+const tixMatch = (t, sel) => !sel ? true : sel === 'none' ? !(Number(t) > 0) : !t ? false :
+  sel === 'lt1000' ? t < 1000 : sel === '1to2k' ? t >= 1000 && t < 2000 :
+  sel === '2to3k' ? t >= 2000 && t < 3000 : t >= 3000;
+
+const STOCK_FILTERS = [
+  ['', 'All'], ['out', 'Out of stock'], ['low', 'Low (1–2)'],
+  ['some', 'In stock'], ['onorder', 'On order'], ['nocost', 'Needs cost'],
+];
+const stockMatch = (p, live, onorder, sel) =>
+  !sel ? true :
+  sel === 'out' ? live === 0 :
+  sel === 'low' ? live > 0 && live <= 2 :
+  sel === 'some' ? live > 0 :
+  sel === 'onorder' ? onorder > 0 :
+  needsCost(p);
+
+const sortVal = (p, k, cnt) => {
+  const c = cnt[p.id] || {};
+  switch (k) {
+    case 'tickets': return p.tickets || 0;
+    case 'price': return p.price_per_ticket || 1;
+    case 'vendor': return p.vendor_id || '';
+    case 'type': return p.type || '';
+    case 'cost': return Number(p.cost) || 0;
+    case 'live': return (c.inv || 0) + (c.open || 0);
+    case 'onorder': return c.onorder || 0;
+    default: return p.name.toLowerCase();
+  }
+};
 
 export default function Purchase() {
   const { hall, products, vendors, boxes, orderQty, store, reloadHall, setScreen, setToast, can } = useContext(AppCtx);
@@ -11,8 +48,14 @@ export default function Purchase() {
   const [q, setQ] = useState('');
   const [typeF, setTypeF] = useState('');
   const [miscF, setMiscF] = useState('games');
+  const [tixF, setTixF] = useState('');
+  const [priceF, setPriceF] = useState('');
+  const [stockF, setStockF] = useState('');
+  const [sortKey, setSortKey] = useState('name');
+  const [dir, setDir] = useState(1);
 
   const cnt = useMemo(() => countByProduct(boxes), [boxes]);
+  const unpriced = useMemo(() => productsNeedingSetup(products), [products]);
   const vmap = useMemo(() => Object.fromEntries(vendors.map((v) => [v.id, v])), [vendors]);
 
   // use the same builder the PO uses, so packing charges are in the running total
@@ -21,12 +64,27 @@ export default function Purchase() {
   const lineCount = drafts.reduce((a, d) => a + d.lines.filter((l) => l.kind !== 'fee').length, 0);
   const feeTotal = drafts.reduce((a, d) => a + d.lines.filter((l) => l.kind === 'fee').reduce((x, l) => x + l.qty * l.cost, 0), 0);
 
+  const stockOf = (p) => (cnt[p.id]?.inv || 0) + (cnt[p.id]?.open || 0);
+
   const rows = products
     .filter((p) => p.active !== false)
-    .filter((p) => !vendorF || p.vendor_id === vendorF)
-    .filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase()))
-    .filter((p) => passesFilters(p, { type: typeF, misc: miscF }) || (orderQty[p.id] || 0) > 0)
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .filter((p) => (orderQty[p.id] || 0) > 0 || (   // anything already on the order always shows
+      (!vendorF || p.vendor_id === vendorF) &&
+      (!q || p.name.toLowerCase().includes(q.toLowerCase())) &&
+      passesFilters(p, { type: typeF, misc: miscF }) &&
+      tixMatch(p.tickets, tixF) &&
+      (!priceF || String(p.price_per_ticket || 1) === priceF) &&
+      stockMatch(p, stockOf(p), cnt[p.id]?.onorder || 0, stockF)
+    ))
+    .sort((a, b) => {
+      const x = sortVal(a, sortKey, cnt), y = sortVal(b, sortKey, cnt);
+      const d = typeof x === 'string' ? x.localeCompare(y) : (x || 0) - (y || 0);
+      return d * dir || a.name.localeCompare(b.name);
+    });
+
+  const sortBy = (k) => { if (k === sortKey) setDir(-dir); else { setSortKey(k); setDir(1); } };
+  const arrow = (k) => (k === sortKey ? (dir > 0 ? ' ▲' : ' ▼') : '');
+  const stop = (e) => e.stopPropagation();
 
   const setQty = async (pid, v) => {
     const n = Math.max(0, parseInt(v) || 0);
@@ -38,17 +96,12 @@ export default function Purchase() {
     <div>
       <div className="page-head" style={{ position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 10, paddingTop: 6, paddingBottom: 10, borderBottom: '1px solid var(--border)' }}>
         <div className="h1">Purchase — {hall === 'sc' ? 'Santa Clara' : 'Redwood City'}</div>
-        <select value={vendorF} onChange={(e) => setVendorF(e.target.value)}>
-          <option value="">All vendors</option>
-          {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-        </select>
-        <select value={typeF} onChange={(e) => setTypeF(e.target.value)} title="Game type">
-          {GAME_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-        </select>
-        <select value={miscF} onChange={(e) => setMiscF(e.target.value)} title="Cherry tickets and dauber supplies">
-          {MISC_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-        </select>
-        <input type="text" placeholder="Search game…" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 160 }} />
+        {(vendorF || typeF || tixF || priceF || stockF || q || miscF !== 'games') && (
+          <button className="btn ghost sm" onClick={() => { setVendorF(''); setTypeF(''); setTixF(''); setPriceF(''); setStockF(''); setQ(''); setMiscF('games'); }}>
+            Clear filters
+          </button>
+        )}
+        <span className="dimmer" style={{ fontSize: 12 }}>{rows.length} shown</span>
         <div className="grow" />
         <span className="dim" style={{ fontSize: 13 }}>
           {lineCount ? `${lineCount} lines` : 'Enter quantities to build an order'}
@@ -58,12 +111,59 @@ export default function Purchase() {
         <button className="btn primary" disabled={!lineCount || !editable} onClick={() => setScreen('review')}
           title={editable ? '' : 'Your role cannot place orders for this hall'}>Review order →</button>
       </div>
+      {unpriced.length > 0 && (
+        <div className="demo-banner" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span><b>{unpriced.length} item{unpriced.length === 1 ? '' : 's'} can't be ordered yet</b> — they came in from a count sheet with no unit cost.</span>
+          <div style={{ flex: 1 }} />
+          <button className="btn ghost sm" onClick={() => setScreen('games')}>Set their costs →</button>
+        </div>
+      )}
       <div className="card" style={{ overflow: 'hidden' }}>
         <table className="tbl">
           <thead><tr>
-            <th className="first">Game</th><th className="r">Tickets</th><th className="r">$ / ticket</th>
-            <th>Vendor</th><th>Type</th><th className="r">Unit cost</th>
-            <th className="r">Live</th><th className="r">On order</th>
+            <th className="first sortable" onClick={() => sortBy('name')}>
+              <div>Game{arrow('name')}</div>
+              <input type="text" placeholder="Search…" value={q} onClick={stop}
+                onChange={(e) => setQ(e.target.value)} style={{ fontWeight: 400, marginTop: 3, width: 190 }} />
+            </th>
+            <th className="r sortable" style={{ width: 118 }} onClick={() => sortBy('tickets')}>
+              <div>Tickets{arrow('tickets')}</div>
+              <select value={tixF} onClick={stop} onChange={(e) => setTixF(e.target.value)} style={{ fontWeight: 400, marginTop: 3, width: '100%' }}>
+                {TIX_FILTERS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+            </th>
+            <th className="r sortable" style={{ width: 86 }} onClick={() => sortBy('price')}>
+              <div>$ / ticket{arrow('price')}</div>
+              <select value={priceF} onClick={stop} onChange={(e) => setPriceF(e.target.value)} style={{ fontWeight: 400, marginTop: 3, width: '100%' }}>
+                <option value="">All</option><option value="1">$1</option><option value="2">$2</option>
+              </select>
+            </th>
+            <th className="sortable" style={{ width: 150 }} onClick={() => sortBy('vendor')}>
+              <div>Vendor{arrow('vendor')}</div>
+              <select value={vendorF} onClick={stop} onChange={(e) => setVendorF(e.target.value)} style={{ fontWeight: 400, marginTop: 3, width: '100%' }}>
+                <option value="">All</option>
+                {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+              </select>
+            </th>
+            <th className="sortable" style={{ width: 118 }} onClick={() => sortBy('type')}>
+              <div>Type{arrow('type')}</div>
+              <select value={typeF} onClick={stop} onChange={(e) => setTypeF(e.target.value)} style={{ fontWeight: 400, marginTop: 3, width: '100%' }}>
+                {GAME_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </th>
+            <th className="r sortable" style={{ width: 96 }} onClick={() => sortBy('cost')}>
+              <div>Unit cost{arrow('cost')}</div>
+              <select value={miscF} onClick={stop} onChange={(e) => setMiscF(e.target.value)} style={{ fontWeight: 400, marginTop: 3, width: '100%' }} title="Cherry tickets and dauber supplies">
+                {MISC_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </select>
+            </th>
+            <th className="r sortable" style={{ width: 110 }} onClick={() => sortBy('live')}>
+              <div>Live{arrow('live')}</div>
+              <select value={stockF} onClick={stop} onChange={(e) => setStockF(e.target.value)} style={{ fontWeight: 400, marginTop: 3, width: '100%' }}>
+                {STOCK_FILTERS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+            </th>
+            <th className="r sortable" onClick={() => sortBy('onorder')}>On order{arrow('onorder')}</th>
             <th style={{ textAlign: 'center' }}>Order qty</th><th className="r last">Line total</th>
           </tr></thead>
           <tbody>
@@ -73,16 +173,18 @@ export default function Purchase() {
               return (
                 <tr key={p.id} className={n ? 'hl' : ''}>
                   <td className="first">{p.name}</td>
-                  <td className="r mono">{p.tickets ? p.tickets.toLocaleString() : '—'}</td>
+                  <td className="r mono">{needsTickets(p) ? UPD : (p.tickets ? p.tickets.toLocaleString() : '—')}</td>
                   <td className="r mono dim">${p.price_per_ticket || 1}</td>
                   <td className="dim" style={{ fontSize: 12 }}>{vmap[p.vendor_id]?.name}</td>
-                  <td className="dimmer" style={{ fontSize: 12 }}>{p.type}</td>
-                  <td className="r mono">{fmtMoney(p.cost)}</td>
+                  <td className="dimmer" style={{ fontSize: 12 }}>{needsType(p) ? UPD : p.type}</td>
+                  <td className="r mono">{needsCost(p) ? UPD : fmtMoney(p.cost)}</td>
                   <td className="r mono">{(c.inv || 0) + (c.open || 0)}</td>
                   <td className="r mono dimmer">{c.onorder || 0}</td>
                   <td style={{ textAlign: 'center' }}>
-                    <input className="qty" type="number" min="0" value={n || ''} placeholder="" disabled={!editable}
-                      onChange={(e) => setQty(p.id, e.target.value)} />
+                    {needsSetup(p)
+                      ? <span className="badge b-gold" title="Add a unit cost on Add / Update Games before ordering this">needs update</span>
+                      : <input className="qty" type="number" min="0" value={n || ''} placeholder="" disabled={!editable}
+                          onChange={(e) => setQty(p.id, e.target.value)} />}
                   </td>
                   <td className="r mono last">{n ? fmtMoney(n * p.cost) : ''}</td>
                 </tr>

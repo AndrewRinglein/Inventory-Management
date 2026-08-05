@@ -1,5 +1,7 @@
 import React, { useContext, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
+import { needsCost, needsType, needsTickets, needsAnyUpdate, productsNeedingUpdate } from '../lib/logic/setup.js';
+import { REAL_TYPES } from '../lib/logic/categories.js';
 
 const TIX_FILTERS = [
   ['', 'All'], ['lt1000', 'Under 1,000'], ['1to2k', '1,000 – 1,999'],
@@ -17,11 +19,15 @@ export default function Games() {
   const [tixF, setTixF] = useState('');
   const [priceF, setPriceF] = useState('');
   const [showOrig, setShowOrig] = useState(false);
+  const [onlyUnpriced, setOnlyUnpriced] = useState(false);
   const [ng, setNg] = useState({ name: '', vendor_id: 'bv', type: 'flash', cost: '', tickets: '', price: '1' });
 
   const vmap = useMemo(() => Object.fromEntries(vendors.map((v) => [v.id, v])), [vendors]);
 
+  const unpriced = useMemo(() => productsNeedingUpdate(products), [products]);
+
   const rows = products
+    .filter((p) => !onlyUnpriced || needsAnyUpdate(p))
     .filter((p) => !vendorF || p.vendor_id === vendorF)
     .filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase()))
     .filter((p) => !priceF || String(p.price_per_ticket || 1) === priceF)
@@ -74,8 +80,7 @@ export default function Games() {
             </select></div>
           <div className="field" style={{ width: 120, margin: 0 }}><label>Type</label>
             <select value={ng.type} onChange={(e) => setNg({ ...ng, type: e.target.value })} style={{ width: '100%' }}>
-              <option value="flash">Flash</option><option value="strip">Strip</option>
-              <option value="guarantee">Guarantee</option><option value="paper">Paper</option>
+              {REAL_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select></div>
           <div className="field" style={{ width: 100, margin: 0 }}><label>Unit cost $</label>
             <input className="num" type="number" min="0" step="0.01" value={ng.cost} onChange={(e) => setNg({ ...ng, cost: e.target.value })} style={{ width: '100%' }} /></div>
@@ -89,6 +94,19 @@ export default function Games() {
         </div>
       </div>}
 
+      {unpriced.length > 0 && (
+        <div className="demo-banner" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span>
+            <b>{unpriced.length} item{unpriced.length === 1 ? '' : 's'} need updating.</b>{' '}
+            Anything marked <b>update</b> is a blank field. Items without a unit cost are counted in
+            inventory but can't be ordered or received until one is set.
+          </span>
+          <div style={{ flex: 1 }} />
+          <button className="btn ghost sm" onClick={() => setOnlyUnpriced(!onlyUnpriced)}>
+            {onlyUnpriced ? 'Show all games' : 'Show only these →'}
+          </button>
+        </div>
+      )}
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink-2)', cursor: 'pointer' }}>
           <input type="checkbox" checked={showOrig} onChange={(e) => setShowOrig(e.target.checked)} />
@@ -136,20 +154,26 @@ export default function Games() {
                     onBlur={(e) => e.target.value !== p.name && edit(p, 'name', e.target.value)} />
                 </td>
                 <td>
-                  <input className="cell num" type="number" min="0" placeholder="—" disabled={!editable} defaultValue={p.tickets ?? ''} key={p.id + '_t' + p.tickets}
+                  <input className={'cell num' + (needsTickets(p) ? ' needs-update' : '')} type="number" min="0"
+                    placeholder={needsTickets(p) ? 'update' : '—'} title={needsTickets(p) ? 'No ticket count yet' : ''}
+                    disabled={!editable} defaultValue={p.tickets ?? ''} key={p.id + '_t' + p.tickets}
                     onBlur={(e) => String(p.tickets ?? '') !== e.target.value && edit(p, 'tickets', e.target.value)} style={{ width: 90 }} />
                 </td>
                 <td className="dim" style={{ fontSize: 12 }}>{vmap[p.vendor_id]?.name}</td>
                 <td className="mono dimmer" style={{ fontSize: 11 }}>{p.id}</td>
                 {showOrig && <td className="dimmer" style={{ fontSize: 11 }}>{p.orig_name}</td>}
                 <td>
-                  <select value={p.type} disabled={!editable} onChange={(e) => edit(p, 'type', e.target.value)} style={{ fontSize: 12, padding: '3px 4px', width: '100%' }}>
-                    <option value="flash">flash</option><option value="strip">strip</option>
-                    <option value="guarantee">guarantee</option><option value="paper">paper</option>
+                  <select value={needsType(p) ? '' : p.type} disabled={!editable} onChange={(e) => e.target.value && edit(p, 'type', e.target.value)}
+                    className={needsType(p) ? 'needs-update' : ''} title={needsType(p) ? 'Type not set yet' : ''}
+                    style={{ fontSize: 12, padding: '3px 4px', width: '100%' }}>
+                    {needsType(p) && <option value="">update</option>}
+                    {REAL_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
                   </select>
                 </td>
                 <td>
-                  <input className="cell num" type="number" min="0" step="0.01" disabled={!editable} defaultValue={p.cost} key={p.id + '_c' + p.cost}
+                  <input className={'cell num' + (needsCost(p) ? ' needs-update' : '')} type="number" min="0" step="0.01"
+                    placeholder={needsCost(p) ? 'update' : ''} title={needsCost(p) ? 'No unit cost — cannot be ordered or received' : ''}
+                    disabled={!editable} defaultValue={needsCost(p) ? '' : p.cost} key={p.id + '_c' + p.cost}
                     onBlur={(e) => String(p.cost) !== e.target.value && edit(p, 'cost', e.target.value)} style={{ width: 84 }} />
                 </td>
                 <td>
@@ -158,7 +182,11 @@ export default function Games() {
                     <option value="1">$1</option><option value="2">$2</option>
                   </select>
                 </td>
-                <td className="last">{p.id.startsWith('C') && <span className="badge b-green">new</span>}</td>
+                <td className="last">
+                  {needsCost(p)
+                    ? <span className="badge b-gold" title="Set a unit cost to make this orderable">can't order</span>
+                    : (p.id.startsWith('C') && <span className="badge b-green">new</span>)}
+                </td>
               </tr>
             ))}
           </tbody>

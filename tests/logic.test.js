@@ -6,6 +6,7 @@ import { canTransition, transition, countByProduct } from '../src/lib/logic/boxe
 import { resolveScan } from '../src/lib/logic/scan.js';
 import { buildOrderEmails, buildDeliveredEmail, buildShortageEmail, senderFor } from '../src/lib/logic/emails.js';
 import { isMisc, passesFilters } from '../src/lib/logic/categories.js';
+import { needsSetup, needsCost, needsType, needsTickets, needsAnyUpdate, productsNeedingSetup } from '../src/lib/logic/setup.js';
 
 // ---------- PO math ----------
 test('poTotals matches spreadsheet math (9.75% tax)', () => {
@@ -208,6 +209,22 @@ test('two vendors -> two PO emails, still no accounting copies', () => {
   assert.deepEqual(emails.map((e) => e.to).sort(), ['bv@x.com', 'md@x.com']);
 });
 
+// ---------- items imported without a price ----------
+test('an item with no cost is not ready to order or receive', () => {
+  assert.equal(needsSetup({ name: 'Cowgirls', cost: 0 }), true);
+  assert.equal(needsSetup({ name: 'Cowgirls', cost: '0.00' }), true);
+  assert.equal(needsSetup({ name: 'Cowgirls' }), true);
+  assert.equal(needsSetup({ name: 'BIG FISH', cost: 117.3 }), false);
+  assert.equal(needsSetup({ name: 'BIG FISH', cost: '117.30' }), false, 'costs arrive as strings from the API');
+});
+
+test('productsNeedingSetup lists only the unpriced ones, alphabetically', () => {
+  const list = productsNeedingSetup([
+    { name: 'Zeta', cost: 0 }, { name: 'BIG FISH', cost: 117.3 }, { name: 'Alpha', cost: 0 },
+  ]);
+  assert.deepEqual(list.map((p) => p.name), ['Alpha', 'Zeta']);
+});
+
 // ---------- inventory filters ----------
 const FLASH  = { name: 'BIG FISH', type: 'flash' };
 const STRIP  = { name: 'Vanguard Strips', type: 'strip' };
@@ -311,4 +328,31 @@ test('shortage email uses singular phrasing for one missing item', () => {
   const e = buildShortageEmail({ num: 'SC-1' }, vendors[0], 'SC', [{ qty: 1, name_snapshot: 'X', cost: 50 }], SENDER);
   assert.match(e.body, /one item was missing/);
   assert.match(e.body, /whether it's coming/);
+});
+
+test('a blank type is flagged for update, but guarantee is a real type', () => {
+  assert.equal(needsType({ name: 'Caribbean Gold', type: null }), true);
+  assert.equal(needsType({ name: 'Caribbean Gold' }), true);
+  assert.equal(needsType({ name: 'Guarantee numbers- Money Tree', type: 'guarantee' }), false,
+    'SC stocks 24 real guarantee games — the type must stay valid');
+  assert.equal(needsType({ name: 'Cowgirls', type: 'flash' }), false);
+});
+
+test('games need a ticket count; paper and daubers do not', () => {
+  assert.equal(needsTickets({ name: 'Cowgirls', type: 'flash', tickets: null }), true);
+  assert.equal(needsTickets({ name: 'Lucky Strip', type: 'strip', tickets: 0 }), true);
+  assert.equal(needsTickets({ name: 'Cowgirls', type: 'flash', tickets: 1440 }), false);
+  assert.equal(needsTickets({ name: 'Red,White and Blue paper', type: 'paper' }), false);
+  assert.equal(needsTickets({ name: '$2 DAUBERS — Blue', type: 'supply' }), false);
+  assert.equal(needsTickets({ name: 'Big Five cherry ticket', type: 'flash' }), false,
+    'cherry cases sell by the ticket and are counted, not boxed');
+});
+
+test('only a missing cost blocks ordering; other gaps just ask for an update', () => {
+  const noType = { name: 'Caribbean Gold', type: null, cost: 89.1, tickets: 1440 };
+  assert.equal(needsCost(noType), false);
+  assert.equal(needsSetup(noType), false, 'a blank type must not stop a PO');
+  assert.equal(needsAnyUpdate(noType), true, 'but it still shows update');
+  const done = { name: 'BIG FISH', type: 'flash', cost: 117.3, tickets: 1440 };
+  assert.equal(needsAnyUpdate(done), false);
 });

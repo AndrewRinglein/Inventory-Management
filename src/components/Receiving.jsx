@@ -2,6 +2,7 @@ import React, { useContext, useEffect, useMemo, useState, useRef } from 'react';
 import { AppCtx } from '../App.jsx';
 import { fmtMoney } from '../lib/logic/po.js';
 import { buildShortageEmail, buildDeliveredEmail, senderFor } from '../lib/logic/emails.js';
+import { needsSetup } from '../lib/logic/setup.js';
 
 const HALL_NAMES = { sc: 'Santa Clara', rwc: 'Redwood City' };
 
@@ -73,6 +74,10 @@ export default function Receiving() {
 
   /** Manual entry: add any catalog game as received (name + box count), even if it wasn't on this PO. */
   const addExtra = (product, code, qty = 1) => {
+    if (needsSetup(product)) {
+      setToast(`"${product.name}" has no unit cost yet — set it on Add / Update Games first.`, null, 6000);
+      return;
+    }
     const n = Math.max(1, parseInt(qty) || 1);
     setExtras((prev) => {
       const found = prev.find((x) => x.product_id === product.id);
@@ -402,10 +407,12 @@ export default function Receiving() {
                 <div className="card" style={{ position: 'absolute', top: 56, left: 0, width: 340, zIndex: 60, maxHeight: 250, overflowY: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.18)' }}>
                   {matchingProducts.length === 0 && <div style={{ padding: 12 }} className="dimmer">No game matches “{addQuery}”.</div>}
                   {matchingProducts.map((p) => (
-                    <div key={p.id} onClick={() => { setAddPick(p); setAddQuery(p.name); }}
-                      style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-lt)', cursor: 'pointer', fontSize: 12.5 }}>
+                    <div key={p.id} onClick={() => { if (!needsSetup(p)) { setAddPick(p); setAddQuery(p.name); } }}
+                      style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-lt)', fontSize: 12.5,
+                               cursor: needsSetup(p) ? 'not-allowed' : 'pointer', opacity: needsSetup(p) ? 0.55 : 1 }}>
                       <b>{p.name}</b>
-                      <span className="dimmer"> · {vmap[p.vendor_id]?.name} · {fmtMoney(p.cost)}</span>
+                      <span className="dimmer"> · {vmap[p.vendor_id]?.name} · {needsSetup(p) ? '' : fmtMoney(p.cost)}</span>
+                      {needsSetup(p) && <span className="badge b-gold" style={{ marginLeft: 6 }}>needs update</span>}
                     </div>
                   ))}
                 </div>
