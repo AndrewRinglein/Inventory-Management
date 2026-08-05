@@ -505,3 +505,70 @@ test('a fully priced PO email says nothing about missing prices', () => {
   assert.ok(!e.body.includes("Items below marked with a ?"));
   assert.ok(!e.body.includes('covers the priced lines only'));
 });
+
+// ---- per-vendor delivery addresses ----
+import { deliveryAddress, setVendorAddress, hasOverride, overriddenVendors } from '../src/lib/logic/halls.js';
+
+const HALLS = {
+  sc: { address: '1 Hall Way, Santa Clara, CA' },
+  rwc: { address: '2 Hall Rd, Redwood City, CA', byVendor: { md: '900 Dock St, San Carlos, CA' } },
+};
+
+test('a vendor without its own address gets the hall address', () => {
+  assert.equal(deliveryAddress(HALLS, 'rwc', 'bv'), '2 Hall Rd, Redwood City, CA');
+  assert.equal(deliveryAddress(HALLS, 'sc', 'md'), '1 Hall Way, Santa Clara, CA',
+    "an override on one hall must not leak into the other");
+});
+
+test('a vendor with its own address gets that one', () => {
+  assert.equal(deliveryAddress(HALLS, 'rwc', 'md'), '900 Dock St, San Carlos, CA');
+  assert.equal(hasOverride(HALLS, 'rwc', 'md'), true);
+  assert.equal(hasOverride(HALLS, 'rwc', 'bv'), false);
+});
+
+test('clearing a vendor address puts it back on the hall address', () => {
+  const cleared = setVendorAddress(HALLS, 'rwc', 'md', '   ');
+  assert.equal(hasOverride(cleared, 'rwc', 'md'), false);
+  assert.equal(deliveryAddress(cleared, 'rwc', 'md'), '2 Hall Rd, Redwood City, CA');
+  assert.deepEqual(HALLS.rwc.byVendor, { md: '900 Dock St, San Carlos, CA' }, 'must not mutate the original');
+});
+
+test('setting a vendor address leaves every other vendor and hall alone', () => {
+  const next = setVendorAddress(HALLS, 'rwc', 'bv', '77 Side Door, Redwood City, CA');
+  assert.equal(deliveryAddress(next, 'rwc', 'bv'), '77 Side Door, Redwood City, CA');
+  assert.equal(deliveryAddress(next, 'rwc', 'md'), '900 Dock St, San Carlos, CA');
+  assert.equal(deliveryAddress(next, 'sc', 'bv'), '1 Hall Way, Santa Clara, CA');
+});
+
+test('missing config is empty rather than a crash', () => {
+  assert.equal(deliveryAddress(undefined, 'rwc', 'md'), '');
+  assert.equal(deliveryAddress({}, 'rwc', 'md'), '');
+  assert.equal(deliveryAddress({ rwc: {} }, 'rwc', 'md'), '');
+  assert.deepEqual(overriddenVendors(undefined, 'rwc', [{ id: 'md' }]), []);
+});
+
+test('the PO prints the address for the vendor it is going to', () => {
+  const V = [
+    { id: 'bv', name: 'Bingo Vision', email: 'a@x.test', contact_name: 'Scott', tax_rate: 0.0975, packing_fee: 0 },
+    { id: 'md', name: 'Marathon', email: 'b@x.test', contact_name: 'Esteban', tax_rate: 0.0975, packing_fee: 0 },
+  ];
+  const P = [
+    { id: 'A', vendor_id: 'bv', name: 'Alpha', type: 'flash', cost: 10, tickets: 100, price_per_ticket: 1 },
+    { id: 'B', vendor_id: 'md', name: 'Beta', type: 'flash', cost: 20, tickets: 100, price_per_ticket: 1 },
+  ];
+  const drafts = buildDrafts({ A: 1, B: 1 }, P, V).map((d, i) => ({ ...d, num: `N${i}` }));
+  const resolver = (vid) => deliveryAddress(HALLS, 'rwc', vid);
+  const out = buildOrderEmails(drafts, V, 'Redwood City', resolver, '', { name: 'Shelly' });
+  const bv = out.find((e) => e.to === 'a@x.test');
+  const md = out.find((e) => e.to === 'b@x.test');
+  assert.match(bv.body, /Please deliver to:\n2 Hall Rd, Redwood City, CA/);
+  assert.match(md.body, /Please deliver to:\n900 Dock St, San Carlos, CA/);
+});
+
+test('a plain string address still works everywhere', () => {
+  const V = [{ id: 'bv', name: 'BV', email: 'a@x.test', contact_name: 'Scott', tax_rate: 0.0975, packing_fee: 0 }];
+  const P = [{ id: 'A', vendor_id: 'bv', name: 'Alpha', type: 'flash', cost: 10, tickets: 100, price_per_ticket: 1 }];
+  const [d] = buildDrafts({ A: 1 }, P, V);
+  const [e] = buildOrderEmails([{ ...d, num: 'N1' }], V, 'Santa Clara', '1 Hall Way', '', { name: 'Sagit' });
+  assert.match(e.body, /Please deliver to:\n1 Hall Way/);
+});

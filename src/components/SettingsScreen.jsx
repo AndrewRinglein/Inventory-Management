@@ -1,5 +1,6 @@
 import React, { useContext, useEffect, useState } from 'react';
 import { AppCtx } from '../App.jsx';
+import { deliveryAddress, setVendorAddress, overriddenVendors } from '../lib/logic/halls.js';
 
 export default function SettingsScreen() {
   const { settings, vendors, store, reloadSettings, reloadCatalog, setToast, requirePin, IS_DEMO, hall, boxes, pos, payments, products, can } = useContext(AppCtx);
@@ -11,6 +12,7 @@ export default function SettingsScreen() {
   const [vend, setVend] = useState(null);
   const [sender, setSender] = useState(null);
   const [senderHall, setSenderHall] = useState('sc');
+  const [addrHall, setAddrHall] = useState(null);   // which hall's per-vendor list is open
 
   useEffect(() => {
     (async () => { setUnlocked(await requirePin()); })();
@@ -129,12 +131,51 @@ export default function SettingsScreen() {
         </div>
         <div>
           <div className="card pad" style={{ marginBottom: 14 }}>
-            <b style={{ fontSize: 13.5 }}>Halls</b>
-            <div style={{ marginTop: 10 }}>
-              <Row label="Santa Clara delivery address">
-                <input type="text" value={halls.sc?.address || ''} onChange={(e) => setHalls({ ...halls, sc: { ...halls.sc, address: e.target.value } })} style={{ width: '100%' }} /></Row>
-              <Row label="Redwood City delivery address">
-                <input type="text" value={halls.rwc?.address || ''} onChange={(e) => setHalls({ ...halls, rwc: { ...halls.rwc, address: e.target.value } })} style={{ width: '100%' }} /></Row>
+            <b style={{ fontSize: 13.5 }}>Halls — delivery addresses</b>
+            <p className="muted-note" style={{ marginTop: 4, marginBottom: 4 }}>
+              This is the “Please deliver to” block on the PO. Set the hall's usual address, and
+              give a vendor its own only when they drop somewhere else.
+            </p>
+            <div style={{ marginTop: 6 }}>
+              {[['sc', 'Santa Clara'], ['rwc', 'Redwood City']].map(([hid, label]) => {
+                const over = overriddenVendors(halls, hid, vendors);
+                const open = addrHall === hid;
+                return (
+                  <div key={hid} style={{ marginBottom: 12 }}>
+                    <Row label={`${label} — usual delivery address`}>
+                      <input type="text" placeholder="street, city, state"
+                        value={halls[hid]?.address || ''}
+                        onChange={(e) => setHalls({ ...halls, [hid]: { ...halls[hid], address: e.target.value } })}
+                        style={{ width: '100%' }} /></Row>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+                      <button className="btn ghost sm" onClick={() => setAddrHall(open ? null : hid)}>
+                        {open ? 'Hide vendor addresses' : 'Different address for some vendors →'}
+                      </button>
+                      {over.length > 0 && (
+                        <span className="badge b-teal" title={over.map((v) => v.name).join(', ')}>
+                          {over.length} vendor{over.length === 1 ? '' : 's'} elsewhere
+                        </span>
+                      )}
+                    </div>
+                    {open && (
+                      <div style={{ marginTop: 8, paddingLeft: 10, borderLeft: '2px solid var(--border)' }}>
+                        {vendors.map((v) => (
+                          <Row key={v.id} label={v.name}>
+                            <input type="text"
+                              placeholder={halls[hid]?.address ? `same as ${label} — ${halls[hid].address}` : `same as ${label}`}
+                              value={halls[hid]?.byVendor?.[v.id] || ''}
+                              onChange={(e) => setHalls(setVendorAddress(halls, hid, v.id, e.target.value))}
+                              style={{ width: '100%' }} />
+                          </Row>
+                        ))}
+                        <p className="muted-note" style={{ marginTop: 2 }}>
+                          Leave a vendor blank to use the hall address. Clearing one puts it back to normal.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
           <div className="card pad" style={{ marginBottom: 14 }}>

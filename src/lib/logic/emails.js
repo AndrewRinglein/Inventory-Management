@@ -50,6 +50,9 @@ const line = (l) => {
 };
 
 function poBody(po, vendor, hallName, hallAddress, sender) {
+  // hallAddress may be a plain string or a resolver, because a hall can send
+  // different vendors to different doors (see logic/halls.js)
+  const address = typeof hallAddress === 'function' ? hallAddress(vendor.id) : hallAddress;
   const date = new Date(po.sent_at || Date.now()).toLocaleDateString('en-US', {
     month: 'long', day: 'numeric', year: 'numeric',
   });
@@ -69,8 +72,8 @@ function poBody(po, vendor, hallName, hallAddress, sender) {
     `  ${'Total:'.padEnd(20)}${fmtMoney(po.total).padStart(11)}`,
     n ? `  (covers the priced lines only — the "?" items are on top of this)` : null,
     ``,
-    hallAddress ? `Please deliver to:\n${hallAddress}` : '',
-    hallAddress ? `` : '',
+    address ? `Please deliver to:\n${address}` : '',
+    address ? `` : '',
     `Could you confirm you got this and let me know when it should arrive? Please put ${po.num} on the invoice so we can match it up when it lands.`,
     `Ordered ${date}.`,
     ...signature(sender, hallName),

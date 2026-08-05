@@ -2,6 +2,7 @@ import React, { useContext, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
 import { buildDrafts, nextPoNum, fmtMoney } from '../lib/logic/po.js';
 import { buildOrderEmails, senderFor } from '../lib/logic/emails.js';
+import { addressResolver } from '../lib/logic/halls.js';
 
 const HALL_NAMES = { sc: 'Santa Clara', rwc: 'Redwood City' };
 
@@ -16,7 +17,8 @@ export default function Review() {
 
   const emailCfg = settings.email || {};
   const hallName = HALL_NAMES[hall];
-  const hallAddress = settings.halls_config?.[hall]?.address || '';
+  // a vendor may deliver somewhere other than the hall itself
+  const hallAddress = addressResolver(settings.halls_config, hall);
   const accounting = emailCfg.accountingAddress || '(accounting address not set — Settings)';
 
   const emails = useMemo(() => {
