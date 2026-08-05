@@ -384,3 +384,64 @@ test('a real game whose name merely contains those letters still needs a count',
   assert.equal(needsTickets({ name: 'Miscreant Mayhem', type: 'flash', tickets: null }), true);
   assert.equal(isGrabBag({ name: 'Monopoly' }), false);
 });
+
+// ---- asking a distributor for prices and counts ----
+import { buildPriceRequests, buildPriceRequestEmail } from '../src/lib/logic/emails.js';
+
+const ASK_VENDORS = [
+  { id: 'bv', name: 'Bingo Vision', email: 'scott@example-bv.com', contact_name: 'Scott' },
+  { id: 'md', name: 'Marathon Distributors', email: 'esteban@example-md.com', contact_name: 'Esteban' },
+];
+const ASK_SENDER = { name: 'Sagit', title: 'Inventory', org: 'Vanguard' };
+
+test('one email per distributor, each listing only their own games', () => {
+  const items = [
+    { name: 'Cowgirls', vendor_id: 'bv', cost: 0, tickets: 0, ask: ['price', 'tickets'] },
+    { name: 'Smokin Tokens', vendor_id: 'md', cost: 0, tickets: 0, ask: ['price'] },
+    { name: 'Animal Idol', vendor_id: 'bv', cost: 0, tickets: 0, ask: ['price'] },
+  ];
+  const out = buildPriceRequests(items, ASK_VENDORS, 'Redwood City', ASK_SENDER);
+  assert.equal(out.length, 2);
+  const bv = out.find((e) => e.vendor_id === 'bv');
+  assert.equal(bv.to, 'scott@example-bv.com');
+  assert.match(bv.body, /Hi Scott,/);
+  assert.match(bv.body, /Cowgirls/);
+  assert.match(bv.body, /Animal Idol/);
+  assert.ok(!bv.body.includes('Smokin Tokens'), "another vendor's game must not leak into this email");
+  assert.match(out.find((e) => e.vendor_id === 'md').body, /Smokin Tokens/);
+});
+
+test('games are listed alphabetically and the ask names the missing field', () => {
+  const e = buildPriceRequestEmail(ASK_VENDORS[0], 'Santa Clara', [
+    { name: 'Alpha', cost: 0, tickets: 0, ask: ['price'] },
+    { name: 'Beta', cost: 64.6, tickets: 0, ask: ['tickets'] },
+  ], ASK_SENDER);
+  assert.ok(e.body.indexOf('Alpha') < e.body.indexOf('Beta'));
+  assert.match(e.body, /Beta.*tickets per box/);
+  assert.match(e.body, /we have \$64\.60/, 'quote back what we hold so they can correct it');
+});
+
+test('the subject narrows when we only need one kind of answer', () => {
+  const priceOnly = buildPriceRequestEmail(ASK_VENDORS[0], 'Santa Clara',
+    [{ name: 'Alpha', cost: 0, tickets: 0, ask: ['price'] }], ASK_SENDER);
+  assert.match(priceOnly.subject, /current pricing on 1 game/);
+  const both = buildPriceRequestEmail(ASK_VENDORS[0], 'Santa Clara', [
+    { name: 'Alpha', cost: 0, tickets: 0, ask: ['price'] },
+    { name: 'Beta', cost: 0, tickets: 0, ask: ['tickets'] },
+  ], ASK_SENDER);
+  assert.match(both.subject, /pricing and ticket counts on 2 games/);
+});
+
+test('the sender signs it and an optional note is carried through', () => {
+  const e = buildPriceRequestEmail(ASK_VENDORS[0], 'Santa Clara',
+    [{ name: 'Alpha', cost: 0, tickets: 0, ask: ['price'] }], ASK_SENDER, 'Planning the fall order.');
+  assert.match(e.body, /Planning the fall order\./);
+  assert.match(e.body, /Thanks,\nSagit\nInventory, Vanguard\nSanta Clara/);
+});
+
+test('a vendor with no address is skipped rather than sent into the void', () => {
+  const out = buildPriceRequests(
+    [{ name: 'Orphan', vendor_id: 'nobody', cost: 0, tickets: 0, ask: ['price'] }],
+    ASK_VENDORS, 'Santa Clara', ASK_SENDER);
+  assert.equal(out.length, 0);
+});

@@ -2,6 +2,7 @@ import React, { useContext, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
 import { needsCost, needsType, needsTickets, needsAnyUpdate, productsNeedingUpdate } from '../lib/logic/setup.js';
 import { REAL_TYPES } from '../lib/logic/categories.js';
+import AskDistributor from './AskDistributor.jsx';
 
 const TIX_FILTERS = [
   ['', 'All'], ['lt1000', 'Under 1,000'], ['1to2k', '1,000 – 1,999'],
@@ -20,6 +21,7 @@ export default function Games() {
   const [priceF, setPriceF] = useState('');
   const [showOrig, setShowOrig] = useState(false);
   const [onlyUnpriced, setOnlyUnpriced] = useState(false);
+  const [asking, setAsking] = useState(false);
   const [ng, setNg] = useState({ name: '', vendor_id: 'bv', type: 'flash', cost: '', tickets: '', price: '1' });
 
   const vmap = useMemo(() => Object.fromEntries(vendors.map((v) => [v.id, v])), [vendors]);
@@ -67,7 +69,18 @@ export default function Games() {
 
   return (
     <div>
-      <div className="page-head"><div className="h1">{editable ? 'Add / Update Games' : 'Game Catalog'}</div>{!editable && <span className="badge b-gray">read-only — catalog edits are Super Admin only</span>}</div>
+      {asking && <AskDistributor onClose={() => setAsking(false)} />}
+      <div className="page-head">
+        <div className="h1">{editable ? 'Add / Update Games' : 'Game Catalog'}</div>
+        {!editable && <span className="badge b-gray">read-only — catalog edits are Super Admin only</span>}
+        <div className="grow" />
+        {can('send') && (
+          <button className="btn primary" onClick={() => setAsking(true)}
+            title="Email each distributor asking for their current prices and ticket counts">
+            ✉ Ask distributors for prices
+          </button>
+        )}
+      </div>
 
       {editable && <div className="card pad" style={{ marginBottom: 14 }}>
         <div style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, color: 'var(--ink-2)', marginBottom: 10 }}>Add a new game</div>

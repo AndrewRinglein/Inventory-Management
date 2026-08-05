@@ -2,6 +2,7 @@ import React, { useContext, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
 import { REAL_TYPES, isMisc, isGrabBag } from '../lib/logic/categories.js';
 import { needsCost, needsType, needsTickets, needsAnyUpdate } from '../lib/logic/setup.js';
+import AskDistributor from './AskDistributor.jsx';
 
 /**
  * Fill in a game's blank fields without leaving the screen you spotted them on.
@@ -12,11 +13,13 @@ import { needsCost, needsType, needsTickets, needsAnyUpdate } from '../lib/logic
  * ticket requirement, so one edit can clear every "update" tag on the row.
  */
 export default function UpdateGame({ product, onClose }) {
-  const { store, reloadCatalog, setToast } = useContext(AppCtx);
+  const { store, reloadCatalog, setToast, vendors, can } = useContext(AppCtx);
+  const vendorName = vendors.find((v) => v.id === product.vendor_id)?.name || '';
   const [type, setType] = useState(product.type || '');
   const [cost, setCost] = useState(needsCost(product) ? '' : String(product.cost));
   const [tickets, setTickets] = useState(product.tickets ?? '');
   const [saving, setSaving] = useState(false);
+  const [asking, setAsking] = useState(false);
 
   const costLocked = !needsCost(product);     // already priced — don't reprice here
   // a mixed pack or a cherry case has no single ticket count to ask for
@@ -110,11 +113,19 @@ export default function UpdateGame({ product, onClose }) {
             : <span style={{ color: 'var(--green)', fontWeight: 600 }}>✓ Saving this clears every “update” tag on this game.</span>}
         </div>
 
-        <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+        <div style={{ display: 'flex', gap: 8, marginTop: 16, alignItems: 'center' }}>
           <button className="btn primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+          {can('send') && (
+            <button className="btn ghost" onClick={() => setAsking(true)}
+              title="Email the distributor asking for this game's price and ticket count">
+              ✉ Ask {vendorName || 'the distributor'}
+            </button>
+          )}
           <div style={{ flex: 1 }} />
           <button className="btn ghost" onClick={onClose}>Cancel</button>
         </div>
+
+        {asking && <AskDistributor preselect={product.id} onClose={() => setAsking(false)} />}
       </div>
     </div>
   );

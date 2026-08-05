@@ -85,6 +85,72 @@ export function buildOrderEmails(pos, vendors, hallName, hallAddress, _accountin
   return out;
 }
 
+/**
+ * Ask a distributor to confirm current pricing and ticket counts on specific games.
+ *
+ * Sent when our own record has gaps — a game that came off a paper count sheet with
+ * no price, or one we've never had a ticket count for. It asks for exactly what's
+ * missing on each line rather than dumping the whole catalog on them, because a
+ * short, specific question gets answered and a long vague one doesn't.
+ *
+ * `items` are { name, ask: ['price'|'tickets'|'type'], cost, tickets } — `ask` says
+ * what we're missing; anything we already hold is quoted back so they can correct it.
+ */
+export function buildPriceRequestEmail(vendor, hallName, items, sender = {}, note = '') {
+  const width = Math.min(42, Math.max(18, ...items.map((i) => i.name.length)));
+  const askLabel = (ask) => {
+    const parts = [];
+    if (ask.includes('price')) parts.push('price');
+    if (ask.includes('tickets')) parts.push('tickets per box');
+    if (ask.includes('type')) parts.push('flash / strip / paper?');
+    return parts.join(' + ');
+  };
+  const row = (i) => {
+    const have = [
+      !i.ask.includes('price') && i.cost > 0 ? `we have ${fmtMoney(i.cost)}` : null,
+      !i.ask.includes('tickets') && i.tickets > 0 ? `${i.tickets.toLocaleString()} tickets` : null,
+    ].filter(Boolean).join(', ');
+    return `  ${i.name.padEnd(width).slice(0, width)}   ${askLabel(i.ask)}${have ? `   (${have})` : ''}`;
+  };
+
+  const onlyPrice = items.every((i) => i.ask.length === 1 && i.ask[0] === 'price');
+  const onlyTix = items.every((i) => i.ask.length === 1 && i.ask[0] === 'tickets');
+  const what = onlyPrice ? 'current pricing' : onlyTix ? 'the ticket count per box' : 'current pricing and ticket counts';
+  const n = items.length;
+
+  return {
+    kind: 'price_request', to: vendor.email,
+    vendor_id: vendor.id, vendor_name: vendor.name,
+    subject: `Quick question — ${what} on ${n} game${n === 1 ? '' : 's'} (${hallName})`,
+    body: [
+      greet(vendor.contact_name),
+      ``,
+      `I'm bringing our ${hallName} records up to date and I'm missing ${what} on a few of the games we carry from you. Whenever you get a minute, could you fill in the blanks below?`,
+      ``,
+      ...items.map(row),
+      ``,
+      note.trim() ? `${note.trim()}\n` : null,
+      `No rush at all — replying straight to this email is fine, or send over your current price list and I'll pull it from there.`,
+      `Thanks for the help, it saves me guessing.`,
+      ...signature(sender, hallName),
+    ].filter((l) => l !== null).join('\n'),
+  };
+}
+
+/** One email per vendor, for the games selected across all of them. */
+export function buildPriceRequests(items, vendors, hallName, sender = {}, note = '') {
+  const vmap = Object.fromEntries(vendors.map((v) => [v.id, v]));
+  const byVendor = {};
+  for (const i of items) (byVendor[i.vendor_id] ||= []).push(i);
+  return Object.entries(byVendor)
+    .filter(([vid]) => vmap[vid])
+    .map(([vid, list]) => buildPriceRequestEmail(
+      vmap[vid], hallName,
+      [...list].sort((a, b) => a.name.localeCompare(b.name)),
+      sender, note,
+    ));
+}
+
 export function buildShortageEmail(po, vendor, hallName, missingLines, sender = {}) {
   const value = missingLines.reduce((a, l) => a + l.qty * l.cost, 0);
   const n = missingLines.reduce((a, l) => a + l.qty, 0);

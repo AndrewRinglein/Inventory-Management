@@ -113,7 +113,7 @@ insert into products (id, vendor_id, name, orig_name, type, cost, tickets, price
   ('P101','bv','Olive You','Olive You 1965/$1','flash',115.5,1965,1),
   ('P102','bv','Pair of Ladies','Pair of Ladies 1960/$1','flash',115.2,1960,1),
   ('P103','bv','PAYDIRT','PAYDIRT 2400/$1','flash',141.1,2400,1),
-  ('P104','bv','Packer Head','Packer Head 1000/$1','flash',58.8,1000,1),
+  ('P104','bv','Pecker Heads','Packer Head 1000/$1','flash',58.8,1000,1),
   ('P105','bv','Pick a Puppy','Pick a Puppy 1360/$1','flash',80,1360,1),
   ('P106','bv','Pic 3 Hold''em Flash','Pic 3 Hold''em Flash 1320/$1','flash',77.6,1320,1),
   ('P107','bv','PICK A LOONEY TUNES','PICK A LOONEY TUNES 1080/$1','flash',63.5,1080,1),
