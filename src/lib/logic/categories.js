@@ -33,6 +33,14 @@ export const MISC_MODES = [
 // count sheet it came from — match the misspelling too rather than rename it.
 const CHERRY = /ch(err|eer)y/i;
 
+// A mixed pack — whatever the vendor had spare that week. There is no single
+// ticket count to record, so the app shouldn't keep asking for one. These are
+// still ordinary games for every other purpose: they order, receive and count
+// like anything else, so they stay out of the Misc filter.
+const GRAB_BAG = /\bmisc\b|\bassort|\bvariety pack/i;
+
+export const isGrabBag = (p) => !!p && GRAB_BAG.test(p.name || '');
+
 /** Daubers and other supplies, plus cherry-ticket cases. */
 export function isMisc(p) {
   if (!p) return false;

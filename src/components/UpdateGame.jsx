@@ -1,6 +1,6 @@
 import React, { useContext, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
-import { REAL_TYPES } from '../lib/logic/categories.js';
+import { REAL_TYPES, isMisc, isGrabBag } from '../lib/logic/categories.js';
 import { needsCost, needsType, needsTickets, needsAnyUpdate } from '../lib/logic/setup.js';
 
 /**
@@ -19,7 +19,8 @@ export default function UpdateGame({ product, onClose }) {
   const [saving, setSaving] = useState(false);
 
   const costLocked = !needsCost(product);     // already priced — don't reprice here
-  const wantsTickets = type === 'flash';
+  // a mixed pack or a cherry case has no single ticket count to ask for
+  const wantsTickets = type === 'flash' && !isMisc(product) && !isGrabBag(product);
 
   // what the row will look like after this save
   const after = useMemo(() => ({
@@ -70,9 +71,12 @@ export default function UpdateGame({ product, onClose }) {
             <option value="">— pick a type —</option>
             {REAL_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
           </select>
-          {type && type !== 'flash' && (
+          {type && !wantsTickets && (
             <div className="dimmer" style={{ fontSize: 11.5, marginTop: 4 }}>
-              {type === 'supply' ? 'Supplies' : `${type[0].toUpperCase() + type.slice(1)} games`} sell as a unit, so no ticket count is needed.
+              {isGrabBag(product) ? 'A mixed pack changes contents each order, so'
+                : isMisc(product) ? 'This sells by the ticket, not the box, so'
+                : `${type === 'supply' ? 'Supplies' : type[0].toUpperCase() + type.slice(1) + ' games'} sell as a unit, so`}{' '}
+              no ticket count is needed.
             </div>
           )}
         </div>

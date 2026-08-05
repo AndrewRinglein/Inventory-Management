@@ -6,7 +6,7 @@
 // Every field a person still has to fill in shows "update" in its own cell, so
 // the gap is visible right where it gets fixed.
 
-import { isMisc } from './categories.js';
+import { isMisc, isGrabBag } from './categories.js';
 
 /** Type was never set. */
 export const needsType = (p) => !p || !p.type;
@@ -14,10 +14,11 @@ export const needsType = (p) => !p || !p.type;
 /**
  * Only flash games are counted in tickets. Strips, paper, guarantee numbers and
  * dauber supplies sell as a unit, so a ticket count would be meaningless — and a
- * field nobody can fill is worse than no field at all.
+ * field nobody can fill is worse than no field at all. Mixed "misc" packs are
+ * exempt for the same reason: their contents change from order to order.
  */
 export const needsTickets = (p) =>
-  !!p && p.type === 'flash' && !isMisc(p) && !(Number(p.tickets) > 0);
+  !!p && p.type === 'flash' && !isMisc(p) && !isGrabBag(p) && !(Number(p.tickets) > 0);
 
 /** No unit cost — this is the one that blocks ordering and receiving. */
 export const needsCost = (p) => !p || !(Number(p.cost) > 0);

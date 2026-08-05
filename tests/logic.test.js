@@ -7,6 +7,7 @@ import { resolveScan } from '../src/lib/logic/scan.js';
 import { buildOrderEmails, buildDeliveredEmail, buildShortageEmail, senderFor } from '../src/lib/logic/emails.js';
 import { isMisc, passesFilters } from '../src/lib/logic/categories.js';
 import { needsSetup, needsCost, needsType, needsTickets, needsAnyUpdate, productsNeedingSetup } from '../src/lib/logic/setup.js';
+import { isGrabBag } from '../src/lib/logic/categories.js';
 
 // ---------- PO math ----------
 test('poTotals matches spreadsheet math (9.75% tax)', () => {
@@ -368,4 +369,18 @@ test('only a missing cost blocks ordering; other gaps just ask for an update', (
   assert.equal(needsAnyUpdate(noType), true, 'but it still shows update');
   const done = { name: 'BIG FISH', type: 'flash', cost: 117.3, tickets: 1440 };
   assert.equal(needsAnyUpdate(done), false);
+});
+
+test('mixed packs are not asked for a ticket count', () => {
+  for (const name of ['Misc Packs', 'Premium Misc packs', 'Misc packs of Race/Down',
+                      'Misc Vanguard Packs of strips', 'Assorted flash', 'Variety pack']) {
+    assert.equal(isGrabBag({ name }), true, name);
+    assert.equal(needsTickets({ name, type: 'flash', tickets: null }), false, name);
+  }
+});
+
+test('a real game whose name merely contains those letters still needs a count', () => {
+  assert.equal(isGrabBag({ name: 'Miscreant Mayhem' }), false, 'word boundary, not substring');
+  assert.equal(needsTickets({ name: 'Miscreant Mayhem', type: 'flash', tickets: null }), true);
+  assert.equal(isGrabBag({ name: 'Monopoly' }), false);
 });
