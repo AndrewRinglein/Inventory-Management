@@ -6,6 +6,19 @@ import { senderFor } from '../logic/emails.js';
 
 const ok = ({ data, error }) => { if (error) throw new Error(error.message); return data; };
 
+// PostgREST caps every response at 1000 rows and gives no warning when it truncates —
+// a hall with more than 1000 boxes would silently show wrong counts and values.
+// Page through until a short page comes back.
+const PAGE = 1000;
+async function fetchAll(build) {
+  const out = [];
+  for (let from = 0; ; from += PAGE) {
+    const rows = ok(await build().range(from, from + PAGE - 1));
+    out.push(...rows);
+    if (rows.length < PAGE) return out;
+  }
+}
+
 export class SupabaseStore {
   isDemo = false;
 
@@ -27,7 +40,7 @@ export class SupabaseStore {
 
   // ---- catalog ----
   async getVendors() { return ok(await this.sb.from('vendors').select('*').order('name')); }
-  async getProducts() { return ok(await this.sb.from('products').select('*').order('name')); }
+  async getProducts() { return fetchAll(() => this.sb.from('products').select('*').order('name')); }
   async updateProduct(id, fields) {
     return ok(await this.sb.from('products').update(fields).eq('id', id).select().single());
   }
@@ -41,7 +54,7 @@ export class SupabaseStore {
 
   // ---- order builder quantities ----
   async getOrderQty(hallId) {
-    const rows = ok(await this.sb.from('order_qty').select('*').eq('hall_id', hallId));
+    const rows = await fetchAll(() => this.sb.from('order_qty').select('*').eq('hall_id', hallId));
     return Object.fromEntries(rows.map((r) => [r.product_id, r.qty]));
   }
   async setOrderQty(hallId, productId, qty) {
@@ -72,12 +85,12 @@ export class SupabaseStore {
     }
     return created;
   }
-  async getPos(hallId) { return ok(await this.sb.from('purchase_orders').select('*').eq('hall_id', hallId).order('created_at', { ascending: false })); }
-  async getPoLines(poId) { return ok(await this.sb.from('po_lines').select('*').eq('po_id', poId)); }
+  async getPos(hallId) { return fetchAll(() => this.sb.from('purchase_orders').select('*').eq('hall_id', hallId).order('created_at', { ascending: false })); }
+  async getPoLines(poId) { return fetchAll(() => this.sb.from('po_lines').select('*').eq('po_id', poId)); }
   async setPoStatus(poId, status) { ok(await this.sb.from('purchase_orders').update({ status }).eq('id', poId)); }
 
   // ---- boxes ----
-  async getBoxes(hallId) { return ok(await this.sb.from('boxes').select('*').eq('hall_id', hallId)); }
+  async getBoxes(hallId) { return fetchAll(() => this.sb.from('boxes').select('*').eq('hall_id', hallId).order('id')); }
   async updateBox(id, fields) { return ok(await this.sb.from('boxes').update(fields).eq('id', id).select().single()); }
   async transitionBox(id, toState) {
     // the DB trigger stamps timestamps + rejects illegal transitions
@@ -104,7 +117,7 @@ export class SupabaseStore {
   }
 
   // ---- payments ----
-  async getPayments(hallId) { return ok(await this.sb.from('payments').select('*').eq('hall_id', hallId).order('created_at', { ascending: false })); }
+  async getPayments(hallId) { return fetchAll(() => this.sb.from('payments').select('*').eq('hall_id', hallId).order('created_at', { ascending: false })); }
   async addPayment(p) { return ok(await this.sb.from('payments').insert(p).select().single()); }
   async setPaymentStatus(id, status) { ok(await this.sb.from('payments').update({ status }).eq('id', id)); }
 
@@ -118,7 +131,7 @@ export class SupabaseStore {
     if (error) throw new Error('send-email failed: ' + error.message);
     return data.logs;
   }
-  async getEmails(hallId) { return ok(await this.sb.from('emails').select('*').eq('hall_id', hallId).order('created_at', { ascending: false })); }
+  async getEmails(hallId) { return fetchAll(() => this.sb.from('emails').select('*').eq('hall_id', hallId).order('created_at', { ascending: false })); }
 
   // ---- settings / events ----
   async getSetting(key) {
