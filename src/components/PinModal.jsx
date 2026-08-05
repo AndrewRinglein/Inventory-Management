@@ -10,9 +10,9 @@ export function PinModal({ onSubmit }) {
           Settings, prices, vendors, and deletes are protected.
         </p>
         <form onSubmit={(e) => { e.preventDefault(); onSubmit(pin); }}>
-          <input type="password" inputMode="numeric" autoFocus value={pin}
+          <input type="password" autoFocus value={pin}
             onChange={(e) => setPin(e.target.value)}
-            style={{ textAlign: 'center', fontSize: 18, letterSpacing: 6, width: 160 }} />
+            style={{ textAlign: 'center', fontSize: 18, letterSpacing: 4, width: 180 }} />
           <div style={{ marginTop: 14, display: 'flex', gap: 8, justifyContent: 'center' }}>
             <button type="button" className="btn ghost" onClick={() => onSubmit(null)}>Cancel</button>
             <button className="btn primary">Unlock</button>
