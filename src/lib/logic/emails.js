@@ -116,7 +116,12 @@ export function buildDeliveredEmail(po, vendor, hallName, invoiceNo, receivedLin
         : `Everything we ordered arrived. The amount to pay is ${fmtMoney(owed)}.`,
       ``,
       `What arrived:`,
-      ...receivedLines.map(line),
+      ...receivedLines.filter((l) => !l.extra).map(line),
+      ...(receivedLines.some((l) => l.extra) ? [
+        ``,
+        `Also on the truck (not on the original PO — please include these):`,
+        ...receivedLines.filter((l) => l.extra).map(line),
+      ] : []),
       ...(short ? [
         ``,
         `NOT delivered — please don't pay for these:`,
