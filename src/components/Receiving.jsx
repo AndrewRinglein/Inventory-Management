@@ -7,7 +7,7 @@ import { needsSetup } from '../lib/logic/setup.js';
 const HALL_NAMES = { sc: 'Santa Clara', rwc: 'Redwood City' };
 
 export default function Receiving() {
-  const { hall, pos, boxes, vendors, products, settings, store, reloadHall, setToast, receivingPo, setReceivingPo, IS_DEMO, can, receivingScanRef } = useContext(AppCtx);
+  const { hall, pos, boxes, vendors, products, settings, store, reloadHall, reloadCatalog, setToast, receivingPo, setReceivingPo, IS_DEMO, can, receivingScanRef } = useContext(AppCtx);
   const open = pos.filter((p) => p.status === 'sent' || p.status === 'partial');
   const cur = open.find((p) => p.id === receivingPo) || null;
 
@@ -22,6 +22,7 @@ export default function Receiving() {
   const [addPick, setAddPick] = useState(null);  // manual entry: the chosen game
   const [addQty, setAddQty] = useState('1');     // manual entry: how many boxes
   const addNameRef = useRef(null);
+  const [tbdPrice, setTbdPrice] = useState({});  // product_id -> unit price read off the invoice
   const [stage, setStage] = useState('checkin'); // checkin | emails
   const [pendingEmails, setPendingEmails] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -74,10 +75,6 @@ export default function Receiving() {
 
   /** Manual entry: add any catalog game as received (name + box count), even if it wasn't on this PO. */
   const addExtra = (product, code, qty = 1) => {
-    if (needsSetup(product)) {
-      setToast(`"${product.name}" has no unit cost yet — set it on Add / Update Games first.`, null, 6000);
-      return;
-    }
     const n = Math.max(1, parseInt(qty) || 1);
     setExtras((prev) => {
       const found = prev.find((x) => x.product_id === product.id);
@@ -91,7 +88,7 @@ export default function Receiving() {
       }
       return [...prev, {
         key: product.id + '_' + Date.now(), product_id: product.id, name: product.name,
-        cost: product.cost, qty: n, serials: code || '',
+        cost: Number(product.cost) || 0, price_tbd: needsSetup(product), qty: n, serials: code || '',
       }];
     });
     if (code) { scannedRef.current.add(code); setScanCount(scannedRef.current.size); }
@@ -143,6 +140,20 @@ export default function Receiving() {
   useEffect(() => {
     if (stage === 'checkin' && cur && !pendingScan) scanBoxRef.current?.focus();
   }, [stage, cur, pendingScan]);
+
+  /**
+   * Lines that went out with a "?" and are arriving now. The invoice in your hand
+   * is the answer, so this is the moment to capture it — after this the boxes are
+   * in stock and accounting is told what to pay, and both need the real number.
+   */
+  const priceOf = (pid, fallback) => {
+    const v = parseFloat(tbdPrice[pid]);
+    return v > 0 ? Math.round(v * 100) / 100 : (Number(fallback) || 0);
+  };
+  const openPriceLines = lines.filter((l) => l.price_tbd && (parseInt(recv[l.product_id]) || 0) > 0);
+  const openPriceExtras = extras.filter((x) => x.price_tbd && (parseInt(x.qty) || 0) > 0);
+  const missingPrices = [...openPriceLines.map((l) => l.product_id), ...openPriceExtras.map((x) => x.product_id)]
+    .filter((pid) => !(parseFloat(tbdPrice[pid]) > 0));
 
   const remainingFor = (l) => {
     const already = boxes.filter((b) => b.po_id === cur.id && b.product_id === l.product_id && b.state !== 'on_order' && b.state !== 'missing').length;
@@ -212,8 +223,21 @@ export default function Receiving() {
 
   const confirm = async () => {
     if (!cur || busy) return;
+    if (missingPrices.length) {
+      setToast(`Enter the invoice price for ${missingPrices.length} item${missingPrices.length === 1 ? '' : 's'} first — it's marked "?" on the order.`, null, 6000);
+      return;
+    }
     setBusy(true);
     try {
+      // the "?" lines are answered by the invoice: put the price on the catalog first,
+      // so the boxes, the payment and the value are all built from the real number
+      for (const [pid, raw] of Object.entries(tbdPrice)) {
+        const price = parseFloat(raw);
+        if (!(price > 0)) continue;
+        const p = products.find((x) => x.id === pid);
+        if (!p || Number(p.cost) > 0) continue;
+        await store.updateProduct(pid, { cost: Math.round(price * 100) / 100 });
+      }
       const paths = [];
       for (const p of pages) paths.push(await store.uploadInvoicePhoto(p));
       const shipment = await store.createShipment({
@@ -227,26 +251,31 @@ export default function Receiving() {
         const got = Math.min(Math.max(0, parseInt(recv[l.product_id]) || 0), want);
         const serialList = (serials[l.product_id] || '').split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
         // flip boxes on_order -> in_inventory
+        const unit = l.price_tbd ? priceOf(l.product_id, l.cost) : l.cost;
         const pool = boxes.filter((b) => b.po_id === cur.id && b.product_id === l.product_id && b.state === 'on_order').slice(0, got);
         for (let i = 0; i < pool.length; i++) {
-          await store.updateBox(pool[i].id, { serial: serialList[i] || '', shipment_id: shipment.id });
+          await store.updateBox(pool[i].id, {
+            serial: serialList[i] || '', shipment_id: shipment.id,
+            ...(l.price_tbd ? { cost: unit, price_tbd: false } : {}),
+          });
           await store.transitionBox(pool[i].id, 'in_inventory');
         }
-        if (got > 0) receivedLines.push({ ...l, qty: got });
+        if (got > 0) receivedLines.push({ ...l, qty: got, cost: unit, price_tbd: false });
         const still = want - got;
-        if (still > 0) missingLines.push({ ...l, qty: still });
+        if (still > 0) missingLines.push({ ...l, qty: still, cost: unit, price_tbd: l.price_tbd && !(unit > 0) });
       }
       // items that arrived but weren't on the PO: create them straight into inventory
       for (const x of extras) {
         const n = Math.max(0, parseInt(x.qty) || 0);
         if (!n) continue;
         const sers = (x.serials || '').split(/[,\n]/).map((t) => t.trim()).filter(Boolean);
+        const unit = x.price_tbd ? priceOf(x.product_id, x.cost) : x.cost;
         await store.createBoxes(Array.from({ length: n }, (_, i) => ({
           hall_id: hall, product_id: x.product_id, po_id: cur.id, shipment_id: shipment.id,
-          serial: sers[i] || '', cost: x.cost, state: 'in_inventory',
+          serial: sers[i] || '', cost: unit, price_tbd: false, state: 'in_inventory',
           received_at: new Date().toISOString(),
         })));
-        receivedLines.push({ name_snapshot: x.name, qty: n, cost: x.cost, extra: true });
+        receivedLines.push({ name_snapshot: x.name, qty: n, cost: unit, extra: true });
       }
       await store.confirmShipment(shipment.id);
       await store.setPoStatus(cur.id, missingLines.length ? 'partial' : 'closed');
@@ -265,6 +294,7 @@ export default function Receiving() {
         invoice_no: invoiceNo, amount: delivered.amount,
       });
       await reloadHall();
+      await reloadCatalog();
       setPendingEmails(emails);
       setStage('emails');
       setToast(missingLines.length
@@ -366,6 +396,7 @@ export default function Receiving() {
         <table className="tbl">
           <thead><tr>
             <th className="first">Ordered item</th><th className="r">Ordered</th><th className="r">Still expected</th>
+            <th className="r" style={{ width: 120 }}>Unit price</th>
             <th style={{ width: 110 }}>Received now</th><th className="last">Box serials (comma-separated, optional)</th>
           </tr></thead>
           <tbody>
@@ -376,6 +407,14 @@ export default function Receiving() {
                   <td className="first">{l.name_snapshot}</td>
                   <td className="r mono">{l.qty}</td>
                   <td className="r mono">{rem}</td>
+                  <td className="r mono">
+                    {l.price_tbd
+                      ? <input className="num needs-update" type="number" min="0" step="0.01" style={{ width: 92 }}
+                          placeholder="from invoice" title="This went out as ? — put the price from the invoice here"
+                          value={tbdPrice[l.product_id] ?? ''} disabled={rem === 0}
+                          onChange={(e) => setTbdPrice({ ...tbdPrice, [l.product_id]: e.target.value })} />
+                      : fmtMoney(l.cost)}
+                  </td>
                   <td>
                     <input className="qty" type="number" min="0" max={rem} value={recv[l.product_id] ?? ''}
                       onChange={(e) => setRecv({ ...recv, [l.product_id]: e.target.value })} disabled={rem === 0} />
@@ -391,6 +430,13 @@ export default function Receiving() {
           </tbody>
         </table>
       </div>
+      {missingPrices.length > 0 && (
+        <div className="demo-banner">
+          <b>{missingPrices.length} item{missingPrices.length === 1 ? '' : 's'} still need{missingPrices.length === 1 ? 's' : ''} a price from the invoice.</b>{' '}
+          {missingPrices.length === 1 ? 'It' : 'They'} went out on the PO as “?”. Enter what the invoice says and it'll be
+          saved to the catalog, the boxes and the amount accounting is told to pay.
+        </div>
+      )}
       <div className="card" style={{ overflow: 'hidden', marginBottom: 14 }}>
         <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <b style={{ fontSize: 13 }}>Also arrived — not on this order</b>
@@ -407,12 +453,12 @@ export default function Receiving() {
                 <div className="card" style={{ position: 'absolute', top: 56, left: 0, width: 340, zIndex: 60, maxHeight: 250, overflowY: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.18)' }}>
                   {matchingProducts.length === 0 && <div style={{ padding: 12 }} className="dimmer">No game matches “{addQuery}”.</div>}
                   {matchingProducts.map((p) => (
-                    <div key={p.id} onClick={() => { if (!needsSetup(p)) { setAddPick(p); setAddQuery(p.name); } }}
+                    <div key={p.id} onClick={() => { setAddPick(p); setAddQuery(p.name); }}
                       style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-lt)', fontSize: 12.5,
-                               cursor: needsSetup(p) ? 'not-allowed' : 'pointer', opacity: needsSetup(p) ? 0.55 : 1 }}>
+                               cursor: 'pointer' }}>
                       <b>{p.name}</b>
                       <span className="dimmer"> · {vmap[p.vendor_id]?.name} · {needsSetup(p) ? '' : fmtMoney(p.cost)}</span>
-                      {needsSetup(p) && <span className="badge b-gold" style={{ marginLeft: 6 }}>needs update</span>}
+                      {needsSetup(p) && <span className="badge b-gold" style={{ marginLeft: 6 }}>price from invoice</span>}
                     </div>
                   ))}
                 </div>
@@ -438,7 +484,14 @@ export default function Receiving() {
                 {extras.map((x) => (
                   <tr key={x.key}>
                     <td className="first">{x.name}</td>
-                    <td className="r mono">{fmtMoney(x.cost)}</td>
+                    <td className="r mono">
+                      {x.price_tbd
+                        ? <input className="num needs-update" type="number" min="0" step="0.01" style={{ width: 92 }}
+                            placeholder="from invoice" title="We have no price for this one — put the invoice price here"
+                            value={tbdPrice[x.product_id] ?? ''}
+                            onChange={(e) => setTbdPrice({ ...tbdPrice, [x.product_id]: e.target.value })} />
+                        : fmtMoney(x.cost)}
+                    </td>
                     <td>
                       <input className="qty" type="number" min="0" value={x.qty}
                         onChange={(e) => setExtras((prev) => prev.map((y) => y.key === x.key ? { ...y, qty: Math.max(0, parseInt(e.target.value) || 0) } : y))} />
@@ -493,8 +546,11 @@ export default function Receiving() {
         </div>
       )}
       <div style={{ display: 'flex', gap: 10 }}>
-        <button className="btn green" disabled={busy} onClick={confirm}>
-          {busy ? 'Confirming…' : '✓ Confirm shipment & update inventory'}
+        <button className="btn green" disabled={busy || missingPrices.length > 0} onClick={confirm}
+          title={missingPrices.length ? 'Enter the invoice price for the "?" items first' : ''}>
+          {busy ? 'Confirming…'
+            : missingPrices.length ? `Enter ${missingPrices.length} price${missingPrices.length === 1 ? '' : 's'} first`
+            : '✓ Confirm shipment & update inventory'}
         </button>
         <span className="muted-note">
           Anything "still expected" but not received is flagged missing → shortage email + short-pay note to accounting.

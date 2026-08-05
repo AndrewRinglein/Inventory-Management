@@ -3,7 +3,7 @@ import { AppCtx } from '../App.jsx';
 import { fmtMoney, buildDrafts } from '../lib/logic/po.js';
 import { countByProduct } from '../lib/logic/boxes.js';
 import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.js';
-import { needsSetup, needsCost, needsType, needsTickets, productsNeedingSetup } from '../lib/logic/setup.js';
+import { needsCost, needsType, needsTickets } from '../lib/logic/setup.js';
 import UpdateGame from './UpdateGame.jsx';
 
 const TIX_FILTERS = [
@@ -55,7 +55,6 @@ export default function Purchase() {
   const [updPid, setUpdPid] = useState(null);
 
   const cnt = useMemo(() => countByProduct(boxes), [boxes]);
-  const unpriced = useMemo(() => productsNeedingSetup(products), [products]);
   const vmap = useMemo(() => Object.fromEntries(vendors.map((v) => [v.id, v])), [vendors]);
 
   // use the same builder the PO uses, so packing charges are in the running total
@@ -63,6 +62,7 @@ export default function Purchase() {
   const grand = drafts.reduce((a, d) => a + d.total, 0);
   const lineCount = drafts.reduce((a, d) => a + d.lines.filter((l) => l.kind !== 'fee').length, 0);
   const feeTotal = drafts.reduce((a, d) => a + d.lines.filter((l) => l.kind === 'fee').reduce((x, l) => x + l.qty * l.cost, 0), 0);
+  const tbdOrdered = drafts.reduce((a, d) => a + d.lines.filter((l) => l.price_tbd).length, 0);
 
   const Upd = ({ p }) => (
     <button className="badge b-gold" style={{ border: 0, cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: 600 }}
@@ -112,15 +112,21 @@ export default function Purchase() {
           {lineCount ? `${lineCount} lines` : 'Enter quantities to build an order'}
           {feeTotal > 0 && <span className="dimmer"> · incl. {fmtMoney(feeTotal)} packing</span>}
         </span>
-        <span className="mono" style={{ fontWeight: 700, fontSize: 16 }}>{lineCount ? fmtMoney(grand) : ''}</span>
+        <span className="mono" style={{ fontWeight: 700, fontSize: 16 }}>
+          {lineCount ? (tbdOrdered ? `${fmtMoney(grand)} +?` : fmtMoney(grand)) : ''}
+        </span>
         <button className="btn primary" disabled={!lineCount || !editable} onClick={() => setScreen('review')}
           title={editable ? '' : 'Your role cannot place orders for this hall'}>Review order →</button>
       </div>
-      {unpriced.length > 0 && (
+      {tbdOrdered > 0 && (
         <div className="demo-banner" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span><b>{unpriced.length} item{unpriced.length === 1 ? '' : 's'} can't be ordered yet</b> — they came in from a count sheet with no unit cost.</span>
+          <span>
+            <b>{tbdOrdered} line{tbdOrdered === 1 ? '' : 's'} on this order {tbdOrdered === 1 ? 'has' : 'have'} no price yet.</b>{' '}
+            {tbdOrdered === 1 ? 'It' : 'They'}'ll go out as “?” and the email asks the distributor to send at their list price
+            and put the figure on the invoice. The total below covers the priced lines only.
+          </span>
           <div style={{ flex: 1 }} />
-          <button className="btn ghost sm" onClick={() => setScreen('games')}>Set their costs →</button>
+          <button className="btn ghost sm" onClick={() => setScreen('games')}>Enter prices instead →</button>
         </div>
       )}
       <div className="card" style={{ overflow: 'hidden' }}>
@@ -182,18 +188,20 @@ export default function Purchase() {
                   <td className="r mono dim">${p.price_per_ticket || 1}</td>
                   <td className="dim" style={{ fontSize: 12 }}>{vmap[p.vendor_id]?.name}</td>
                   <td className="dimmer" style={{ fontSize: 12 }}>{needsType(p) ? <Upd p={p} /> : p.type}</td>
-                  <td className="r mono">{needsCost(p) ? <Upd p={p} /> : fmtMoney(p.cost)}</td>
+                  <td className="r mono">
+                    {needsCost(p)
+                      ? <button className="tbd" title="No price on our side — the PO goes out with a ? and the vendor fills it in. Click to enter it now."
+                          onClick={() => setUpdPid(p.id)}>?</button>
+                      : fmtMoney(p.cost)}
+                  </td>
                   <td className="r mono">{(c.inv || 0) + (c.open || 0)}</td>
                   <td className="r mono dimmer">{c.onorder || 0}</td>
                   <td style={{ textAlign: 'center' }}>
-                    {needsSetup(p)
-                      ? <button className="badge b-gold" style={{ border: 0, cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: 600 }}
-                          title="Add a unit cost before ordering this — click to do it now"
-                          onClick={() => setUpdPid(p.id)}>needs update</button>
-                      : <input className="qty" type="number" min="0" value={n || ''} placeholder="" disabled={!editable}
-                          onChange={(e) => setQty(p.id, e.target.value)} />}
+                    <input className={'qty' + (needsCost(p) ? ' tbd-qty' : '')} type="number" min="0" value={n || ''} placeholder="" disabled={!editable}
+                      title={needsCost(p) ? "You can order this — the PO will show ? and ask the vendor for their price" : ''}
+                      onChange={(e) => setQty(p.id, e.target.value)} />
                   </td>
-                  <td className="r mono last">{n ? fmtMoney(n * p.cost) : ''}</td>
+                  <td className="r mono last">{n ? (needsCost(p) ? <span className="tbd">?</span> : fmtMoney(n * p.cost)) : ''}</td>
                 </tr>
               );
             })}

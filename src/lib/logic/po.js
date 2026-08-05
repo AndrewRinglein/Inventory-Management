@@ -13,12 +13,19 @@ export function lineName(product) {
 
 /**
  * Totals for one vendor's lines.
- * lines: [{qty, cost}]  → { subtotal, tax, total } with tax rounded per-PO (matches the spreadsheet).
+ * lines: [{qty, cost, price_tbd}] → { subtotal, tax, total, tbd, partial }.
+ *
+ * A line whose price we don't have yet contributes nothing to the money. That
+ * makes the printed total a floor, not the bill — `partial` says so, and every
+ * caller that shows a total is expected to say so too. Quietly counting an
+ * unpriced line as $0 would understate the order and, later, the amount to pay.
  */
 export function poTotals(lines, taxRate) {
-  const subtotal = round2(lines.reduce((a, l) => a + l.qty * l.cost, 0));
+  const priced = lines.filter((l) => !l.price_tbd);
+  const subtotal = round2(priced.reduce((a, l) => a + l.qty * l.cost, 0));
   const tax = round2(subtotal * (taxRate || 0));
-  return { subtotal, tax, total: round2(subtotal + tax) };
+  const tbd = lines.filter((l) => l.price_tbd).length;
+  return { subtotal, tax, total: round2(subtotal + tax), tbd, partial: tbd > 0 };
 }
 
 export const VENDOR_CODES = { bv: 'BV', md: 'MD', cbs: 'CBS', pbf: 'PBF' };
@@ -51,7 +58,9 @@ export function buildDrafts(qty, products, vendors) {
     const p = pmap[pid];
     if (!p) continue;
     (byVendor[p.vendor_id] ||= []).push({
-      product_id: pid, name_snapshot: lineName(p), qty: n, cost: p.cost,
+      product_id: pid, name_snapshot: lineName(p), qty: n,
+      cost: Number(p.cost) > 0 ? p.cost : 0,
+      price_tbd: !(Number(p.cost) > 0),   // ordered before we knew the price
       kind: 'item', _type: p.type,
     });
   }
@@ -83,7 +92,7 @@ export function packingLine(vendor, lines) {
   if (boxes <= 0) return null;
   const label = types.length === 1 ? types[0] : 'items';
   return {
-    product_id: null, kind: 'fee', qty: boxes, cost: round2(fee),
+    product_id: null, kind: 'fee', qty: boxes, cost: round2(fee), price_tbd: false,
     name_snapshot: `Packing — ${fmtMoney(fee)} per box of ${label}`,
   };
 }

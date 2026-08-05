@@ -93,6 +93,7 @@ export class DemoStore {
       const po = {
         id: uid(), num: d.num, hall_id: hallId, vendor_id: d.vendor_id, status: 'sent',
         subtotal: d.subtotal, tax: d.tax, total: d.total,
+        price_tbd_lines: d.lines.filter((l) => l.price_tbd).length,
         sent_at: new Date().toISOString(), created_at: new Date().toISOString(),
       };
       this.db.purchase_orders.push(po);
@@ -102,7 +103,7 @@ export class DemoStore {
         for (let i = 0; i < l.qty; i++) {
           this.db.boxes.push({
             id: uid(), hall_id: hallId, product_id: l.product_id, po_id: po.id,
-            shipment_id: null, serial: '', cost: l.cost, state: 'on_order',
+            shipment_id: null, serial: '', cost: l.cost, price_tbd: !!l.price_tbd, state: 'on_order',
             session_tag: null, ordered_at: new Date().toISOString(),
             received_at: null, opened_at: null, sold_out_at: null,
           });

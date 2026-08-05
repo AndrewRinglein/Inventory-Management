@@ -72,13 +72,16 @@ export class SupabaseStore {
     for (const d of numbered) {
       const po = ok(await this.sb.from('purchase_orders').insert({
         num: d.num, hall_id: hallId, vendor_id: d.vendor_id, status: 'sent',
-        subtotal: d.subtotal, tax: d.tax, total: d.total, sent_at: new Date().toISOString(),
+        subtotal: d.subtotal, tax: d.tax, total: d.total,
+        price_tbd_lines: d.lines.filter((l) => l.price_tbd).length,
+        sent_at: new Date().toISOString(),
       }).select().single());
       ok(await this.sb.from('po_lines').insert(d.lines.map((l) => ({ po_id: po.id, ...l }))));
       // fee lines (packing charges) are not physical goods — no boxes for them
       const boxes = d.lines.filter((l) => l.kind !== 'fee' && l.product_id).flatMap((l) =>
         Array.from({ length: l.qty }, () => ({
-          hall_id: hallId, product_id: l.product_id, po_id: po.id, cost: l.cost, state: 'on_order',
+          hall_id: hallId, product_id: l.product_id, po_id: po.id,
+          cost: l.cost, price_tbd: !!l.price_tbd, state: 'on_order',
         })));
       if (boxes.length) ok(await this.sb.from('boxes').insert(boxes));
       created.push(po);

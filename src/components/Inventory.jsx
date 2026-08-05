@@ -44,7 +44,7 @@ export default function Inventory() {
 
   const rows = useMemo(() => {
     const out = [];
-    let totVal = 0;
+    let totVal = 0, unvalued = 0;
     for (const p of products) {
       const c = cnt[p.id];
       if (!c || (!c.inv && !c.open && !c.onorder)) continue;
@@ -56,8 +56,10 @@ export default function Inventory() {
           asg[b.session_tag] = (asg[b.session_tag] || 0) + 1;
         }
       }
-      const value = ((c.inv || 0) + (c.open || 0)) * p.cost;
+      const held = (c.inv || 0) + (c.open || 0);
+      const value = held * (Number(p.cost) || 0);
       totVal += value;
+      if (needsCost(p)) unvalued += held;   // counted, but we can't put a number on it yet
       out.push({
         p, c, value,
         s: {
@@ -76,6 +78,7 @@ export default function Inventory() {
       return d * dir || a.s.name.localeCompare(b.s.name);
     });
     out.totVal = totVal;
+    out.unvalued = unvalued;
     return out;
   }, [products, boxes, cnt, q, typeF, miscF, sortKey, dir, vmap]);
 
@@ -152,7 +155,15 @@ export default function Inventory() {
           {MISC_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
         </select>
         <div className="grow" />
-        <span className="dim" style={{ fontSize: 13 }}>{rows.length} products with stock · owned value <b className="mono">{fmtMoney(rows.totVal)}</b></span>
+        <span className="dim" style={{ fontSize: 13 }}>
+          {rows.length} products with stock · owned value <b className="mono">{fmtMoney(rows.totVal)}</b>
+          {rows.unvalued > 0 && (
+            <span className="tbd" style={{ cursor: 'default', fontSize: 12 }}
+              title={`${rows.unvalued} boxes have no unit cost yet, so they aren't in this figure`}>
+              {' '}+ {rows.unvalued} unpriced
+            </span>
+          )}
+        </span>
         {editable && (
           <button className={'btn ' + (adjustMode ? 'orange' : 'ghost')} onClick={() => setAdjustMode(!adjustMode)}
             title="Hand-correct a count that doesn't match the shelf">

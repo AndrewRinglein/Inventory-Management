@@ -38,24 +38,36 @@ function signature(sender = {}, hallName) {
 
 const greet = (name) => (name ? `Hi ${name},` : 'Hello,');
 
-/** Right-aligned money column so the numbers stay readable in plain text. */
-const line = (l) =>
-  `  ${String(l.qty).padStart(2)} x ${l.name_snapshot.padEnd(38).slice(0, 38)}  ${fmtMoney(l.cost).padStart(9)} ea  =${fmtMoney(l.qty * l.cost).padStart(11)}`;
+/**
+ * Right-aligned money column so the numbers stay readable in plain text.
+ * A line we don't have a price for prints "?" in both money columns rather than
+ * $0.00 — the vendor needs to see a question, not a number that looks settled.
+ */
+const line = (l) => {
+  const ea = l.price_tbd ? '?' : fmtMoney(l.cost);
+  const ext = l.price_tbd ? '?' : fmtMoney(l.qty * l.cost);
+  return `  ${String(l.qty).padStart(2)} x ${l.name_snapshot.padEnd(38).slice(0, 38)}  ${ea.padStart(9)} ea  =${ext.padStart(11)}`;
+};
 
 function poBody(po, vendor, hallName, hallAddress, sender) {
   const date = new Date(po.sent_at || Date.now()).toLocaleDateString('en-US', {
     month: 'long', day: 'numeric', year: 'numeric',
   });
+  const open = po.lines.filter((l) => l.price_tbd);
+  const n = open.length;
   return [
     greet(vendor.contact_name),
     ``,
     `Here's our next order for ${hallName}. Purchase order number is ${po.num}.`,
+    n ? `` : null,
+    n ? `${n === 1 ? "One item is" : `${n} items are`} marked "?" below — ${n === 1 ? "it's" : "they're"} new to us and I don't have your current price. Please go ahead and send ${n === 1 ? 'it' : 'them'} at your list price and put the figure on the invoice; we'll match it. If anything has gone up a lot, give me a heads up first and I'll confirm before you ship.` : null,
     ``,
     ...po.lines.map(line),
     ``,
     `  ${'Subtotal:'.padEnd(20)}${fmtMoney(po.subtotal).padStart(11)}`,
     `  ${`Tax (${(vendor.tax_rate * 100).toFixed(2)}%):`.padEnd(20)}${fmtMoney(po.tax).padStart(11)}`,
     `  ${'Total:'.padEnd(20)}${fmtMoney(po.total).padStart(11)}`,
+    n ? `  (covers the priced lines only — the "?" items are on top of this)` : null,
     ``,
     hallAddress ? `Please deliver to:\n${hallAddress}` : '',
     hallAddress ? `` : '',

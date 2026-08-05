@@ -102,3 +102,9 @@ input.num { text-align: right; font-family: 'IBM Plex Mono', monospace; }
 .needs-update::placeholder { color:#8a6d1f; font-weight:600; opacity:1; }
 select.needs-update { color:#8a6d1f; font-weight:600; }
 .nav-badge.gold { background: var(--gold); }
+
+/* A price we don't have yet. Prints as "?" on the PO and the vendor fills it in. */
+.tbd { color: var(--gold); font-weight: 700; font-size: 15px; border: 0; background: none;
+       cursor: pointer; padding: 0 4px; font-family: inherit; }
+.tbd:hover { text-decoration: underline; }
+.qty.tbd-qty { border-color: #d8c58a; background: #fdfaf1; }

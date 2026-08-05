@@ -12,6 +12,7 @@ export default function Review() {
   const [edits, setEdits] = useState({});   // idx -> {subject, body}
 
   const drafts = useMemo(() => buildDrafts(orderQty, products, vendors), [orderQty, products, vendors]);
+  const totalTbd = drafts.reduce((a, d) => a + (d.tbd || 0), 0);
 
   const emailCfg = settings.email || {};
   const hallName = HALL_NAMES[hall];
@@ -96,6 +97,13 @@ export default function Review() {
           {busy ? 'Sending…' : `Send all (${emails.list.length} emails)`}
         </button>
       </div>
+      {totalTbd > 0 && (
+        <div className="demo-banner">
+          <b>{totalTbd} line{totalTbd === 1 ? '' : 's'} {totalTbd === 1 ? 'goes' : 'go'} out with a “?” for the price.</b>{' '}
+          The email asks the distributor to ship at their list price and put the figure on the invoice. When it arrives,
+          Receiving will ask you for the real price and fill it in everywhere.
+        </div>
+      )}
       {emailCfg.testMode && !IS_DEMO && (
         <div className="demo-banner">Email test mode is ON — everything goes to {emailCfg.testAddress || 'the test address'} instead of vendors. Turn off in Settings when ready.</div>
       )}
@@ -112,11 +120,18 @@ export default function Review() {
                     <tr key={i}>
                       <td className="first">{l.name_snapshot}</td>
                       <td className="r mono">×{l.qty}</td>
-                      <td className="r mono last">{fmtMoney(l.qty * l.cost)}</td>
+                      <td className="r mono last">
+                        {l.price_tbd ? <span className="tbd" title="No price on our side — the vendor fills this in on their invoice">?</span> : fmtMoney(l.qty * l.cost)}
+                      </td>
                     </tr>
                   ))}
                   <tr><td className="first dim">Subtotal / Tax / Total</td><td />
                     <td className="r mono last"><b>{fmtMoney(d.subtotal)} / {fmtMoney(d.tax)} / {fmtMoney(d.total)}</b></td></tr>
+                  {d.partial && (
+                    <tr><td className="first" colSpan={3} style={{ fontSize: 11.5, color: 'var(--gold)' }}>
+                      Plus {d.tbd} unpriced line{d.tbd === 1 ? '' : 's'} — this total is what we know, not the final bill.
+                    </td></tr>
+                  )}
                 </tbody>
               </table>
             </div>

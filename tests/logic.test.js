@@ -445,3 +445,63 @@ test('a vendor with no address is skipped rather than sent into the void', () =>
     ASK_VENDORS, 'Santa Clara', ASK_SENDER);
   assert.equal(out.length, 0);
 });
+
+// ---- ordering a game before we know its price ----
+const TBD_VENDORS = [{ id: 'bv', name: 'Bingo Vision', email: 'scott@bv.test', contact_name: 'Scott', tax_rate: 0.0975, packing_fee: 0 }];
+const TBD_PRODUCTS = [
+  { id: 'A', vendor_id: 'bv', name: 'Priced Game', type: 'flash', cost: 100, tickets: 1440, price_per_ticket: 1 },
+  { id: 'B', vendor_id: 'bv', name: 'New Game', type: 'flash', cost: 0, tickets: null, price_per_ticket: 1 },
+];
+
+test('an unpriced game can be ordered and is flagged rather than counted as free', () => {
+  const [d] = buildDrafts({ A: 2, B: 3 }, TBD_PRODUCTS, TBD_VENDORS);
+  assert.equal(d.lines.length, 2);
+  const b = d.lines.find((l) => l.product_id === 'B');
+  assert.equal(b.price_tbd, true);
+  assert.equal(b.qty, 3, 'the quantity is real even though the price is not');
+  assert.equal(d.lines.find((l) => l.product_id === 'A').price_tbd, false);
+});
+
+test('the total covers the priced lines only, and says so', () => {
+  const [d] = buildDrafts({ A: 2, B: 3 }, TBD_PRODUCTS, TBD_VENDORS);
+  assert.equal(d.subtotal, 200, 'the unpriced line must not add $0 worth of nothing');
+  assert.equal(d.tax, 19.5);
+  assert.equal(d.total, 219.5);
+  assert.equal(d.tbd, 1);
+  assert.equal(d.partial, true);
+});
+
+test('an order with every price known is not marked partial', () => {
+  const [d] = buildDrafts({ A: 2 }, TBD_PRODUCTS, TBD_VENDORS);
+  assert.equal(d.tbd, 0);
+  assert.equal(d.partial, false);
+});
+
+test('poTotals ignores unpriced lines when computing tax', () => {
+  const t = poTotals([
+    { qty: 1, cost: 100, price_tbd: false },
+    { qty: 9, cost: 0, price_tbd: true },
+  ], 0.1);
+  assert.equal(t.subtotal, 100);
+  assert.equal(t.tax, 10, 'tax on what we know, not on a phantom zero');
+  assert.equal(t.total, 110);
+  assert.equal(t.tbd, 1);
+});
+
+test('the PO email prints ? and asks the vendor to fill the price in', () => {
+  const [d] = buildDrafts({ A: 2, B: 3 }, TBD_PRODUCTS, TBD_VENDORS);
+  const [e] = buildOrderEmails([{ ...d, num: 'SC-2026-08-BV-001' }], TBD_VENDORS, 'Santa Clara', '', '', { name: 'Sagit' });
+  assert.match(e.body, /New Game\s+\?\s+ea\s+=\s+\?/, 'both money columns read ? on that line');
+  assert.match(e.body, /\$100\.00 ea/, 'the priced line still shows its price');
+  assert.match(e.body, /One item is marked "\?"/);
+  assert.match(e.body, /list price and put the figure on the invoice/);
+  assert.match(e.body, /covers the priced lines only/);
+});
+
+test('a fully priced PO email says nothing about missing prices', () => {
+  const [d] = buildDrafts({ A: 2 }, TBD_PRODUCTS, TBD_VENDORS);
+  const [e] = buildOrderEmails([{ ...d, num: 'SC-2026-08-BV-002' }], TBD_VENDORS, 'Santa Clara', '', '', { name: 'Sagit' });
+  assert.ok(!/\?\s+ea/.test(e.body), 'no ? in the money column on a fully priced order');
+  assert.ok(!e.body.includes('is marked "?"'));
+  assert.ok(!e.body.includes('covers the priced lines only'));
+});
