@@ -17,7 +17,10 @@ export default function Receiving() {
   const [pages, setPages] = useState([]);        // File[] — an invoice can be several pages
   const [aiNote, setAiNote] = useState('');
   const [extras, setExtras] = useState([]);      // games received that weren't on this PO
-  const [addQuery, setAddQuery] = useState('');  // manual "type a game name" box
+  const [addQuery, setAddQuery] = useState('');  // manual entry: game name
+  const [addPick, setAddPick] = useState(null);  // manual entry: the chosen game
+  const [addQty, setAddQty] = useState('1');     // manual entry: how many boxes
+  const addNameRef = useRef(null);
   const [stage, setStage] = useState('checkin'); // checkin | emails
   const [pendingEmails, setPendingEmails] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -68,22 +71,34 @@ export default function Receiving() {
     return () => { receivingScanRef.current = null; };
   }, [stage]);   // eslint-disable-line
 
-  /** Manual entry: add any catalog game as received, even if it wasn't on this PO. */
-  const addExtra = (product, code) => {
+  /** Manual entry: add any catalog game as received (name + box count), even if it wasn't on this PO. */
+  const addExtra = (product, code, qty = 1) => {
+    const n = Math.max(1, parseInt(qty) || 1);
     setExtras((prev) => {
       const found = prev.find((x) => x.product_id === product.id);
       if (found) {
         return prev.map((x) => x.product_id === product.id
-          ? { ...x, qty: x.qty + 1, serials: code && !x.serials.includes(code) ? [x.serials, code].filter(Boolean).join(', ') : x.serials }
+          ? {
+            ...x, qty: x.qty + n,
+            serials: code && !x.serials.includes(code) ? [x.serials, code].filter(Boolean).join(', ') : x.serials,
+          }
           : x);
       }
       return [...prev, {
         key: product.id + '_' + Date.now(), product_id: product.id, name: product.name,
-        cost: product.cost, qty: 1, serials: code || '',
+        cost: product.cost, qty: n, serials: code || '',
       }];
     });
     if (code) { scannedRef.current.add(code); setScanCount(scannedRef.current.size); }
-    setAddQuery('');
+    setAddQuery(''); setAddPick(null); setAddQty('1');
+  };
+
+  /** Commit the name + count row. Falls back to the single exact match if nothing was clicked. */
+  const commitManualAdd = () => {
+    const pick = addPick || (matchingProducts.length === 1 ? matchingProducts[0] : null);
+    if (!pick) { setToast('Pick a game from the list first'); return; }
+    addExtra(pick, null, addQty);
+    addNameRef.current?.focus();
   };
 
   const applyExtraScan = (key, code) => {
@@ -105,7 +120,7 @@ export default function Receiving() {
 
   useEffect(() => {
     setStage('checkin'); setPendingEmails(null); setRecv({}); setSerials({}); setInvoiceNo(''); setPages([]); setAiNote('');
-    setExtras([]); setAddQuery('');
+    setExtras([]); setAddQuery(''); setAddPick(null); setAddQty('1');
     scannedRef.current = new Set(); setScanCount(0); setPendingScan(null);
     if (cur) store.getPoLines(cur.id).then((all) => {
       const ls = all.filter((l) => l.kind !== 'fee');   // packing charges aren't received
@@ -374,24 +389,35 @@ export default function Receiving() {
       <div className="card" style={{ overflow: 'hidden', marginBottom: 14 }}>
         <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <b style={{ fontSize: 13 }}>Also arrived — not on this order</b>
-          <span className="dimmer" style={{ fontSize: 12 }}>Type a game name to add it. These go straight into inventory and onto the amount to pay.</span>
+          <span className="dimmer" style={{ fontSize: 12 }}>Type the game and how many boxes. These go straight into inventory and onto the amount to pay.</span>
           <div style={{ flex: 1 }} />
-          <div style={{ position: 'relative' }}>
-            <input type="text" placeholder="Add a game by name…" value={addQuery}
-              onChange={(e) => setAddQuery(e.target.value)} style={{ width: 250 }} />
-            {addQuery.trim().length >= 2 && (
-              <div className="card" style={{ position: 'absolute', top: 34, right: 0, width: 340, zIndex: 60, maxHeight: 260, overflowY: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.18)' }}>
-                {matchingProducts.length === 0 && <div style={{ padding: 12 }} className="dimmer">No game matches “{addQuery}”.</div>}
-                {matchingProducts.map((p) => (
-                  <div key={p.id} onClick={() => addExtra(p)}
-                    style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-lt)', cursor: 'pointer', fontSize: 12.5 }}>
-                    <b>{p.name}</b>
-                    <span className="dimmer"> · {vmap[p.vendor_id]?.name} · {fmtMoney(p.cost)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <form onSubmit={(e) => { e.preventDefault(); commitManualAdd(); }}
+                style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+            <div className="field" style={{ margin: 0, position: 'relative' }}>
+              <label>Game name</label>
+              <input ref={addNameRef} type="text" placeholder="Type a game name…" value={addQuery}
+                onChange={(e) => { setAddQuery(e.target.value); setAddPick(null); }}
+                style={{ width: 240, borderColor: addPick ? 'var(--green)' : undefined }} />
+              {!addPick && addQuery.trim().length >= 2 && (
+                <div className="card" style={{ position: 'absolute', top: 56, left: 0, width: 340, zIndex: 60, maxHeight: 250, overflowY: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.18)' }}>
+                  {matchingProducts.length === 0 && <div style={{ padding: 12 }} className="dimmer">No game matches “{addQuery}”.</div>}
+                  {matchingProducts.map((p) => (
+                    <div key={p.id} onClick={() => { setAddPick(p); setAddQuery(p.name); }}
+                      style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-lt)', cursor: 'pointer', fontSize: 12.5 }}>
+                      <b>{p.name}</b>
+                      <span className="dimmer"> · {vmap[p.vendor_id]?.name} · {fmtMoney(p.cost)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="field" style={{ margin: 0 }}>
+              <label># of boxes</label>
+              <input className="num" type="number" min="1" value={addQty}
+                onChange={(e) => setAddQty(e.target.value)} style={{ width: 90 }} />
+            </div>
+            <button className="btn green" type="submit">+ Add</button>
+          </form>
         </div>
         {extras.length === 0
           ? <div style={{ padding: '14px 16px' }} className="dimmer">Nothing extra yet.</div>
@@ -447,7 +473,7 @@ export default function Receiving() {
               {addQuery.trim().length >= 2 && (
                 <div style={{ maxHeight: 170, overflowY: 'auto', marginTop: 6 }}>
                   {matchingProducts.map((p) => (
-                    <div key={p.id} onClick={() => { addExtra(p, pendingScan); setPendingScan(null); }}
+                    <div key={p.id} onClick={() => { addExtra(p, pendingScan, 1); setPendingScan(null); }}
                       style={{ padding: '6px 8px', borderBottom: '1px solid var(--border-lt)', cursor: 'pointer', fontSize: 12.5 }}>
                       <b>{p.name}</b><span className="dimmer"> · {fmtMoney(p.cost)}</span>
                     </div>
