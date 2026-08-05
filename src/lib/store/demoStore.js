@@ -124,6 +124,26 @@ export class DemoStore {
     this._save();
   }
 
+  async deletePo(poId) {
+    const po = this.db.purchase_orders.find((p) => p.id === poId);
+    if (!po) throw new Error('That order is already gone');
+    const mine = this.db.boxes.filter((b) => b.po_id === poId);
+    const received = mine.filter((b) => b.state !== 'on_order');
+    if (received.length) {
+      throw new Error(`${received.length} box(es) on ${po.num} have already been received. Use "Close short" instead — deleting would remove stock that's on the shelf.`);
+    }
+    this.db.boxes = this.db.boxes.filter((b) => b.po_id !== poId);
+    this.db.po_lines = this.db.po_lines.filter((l) => l.po_id !== poId);
+    this.db.payments = this.db.payments.filter((x) => x.po_num !== po.num);
+    this.db.purchase_orders = this.db.purchase_orders.filter((p) => p.id !== poId);
+    this._event('po.delete', 'purchase_orders', po.num, {
+      label: `${po.hall_id === 'sc' ? 'Santa Clara' : 'Redwood City'} — deleted PO ${po.num}`,
+      total: po.total, vendor_id: po.vendor_id, boxes: mine.length,
+    });
+    this._save();
+    return po;
+  }
+
   // ---- boxes ----
   async getBoxes(hallId) { return this.db.boxes.filter((b) => b.hall_id === hallId); }
   async updateBox(id, fields) {

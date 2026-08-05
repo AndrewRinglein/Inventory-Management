@@ -92,6 +92,33 @@ export class SupabaseStore {
   async getPoLines(poId) { return fetchAll(() => this.sb.from('po_lines').select('*').eq('po_id', poId)); }
   async setPoStatus(poId, status) { ok(await this.sb.from('purchase_orders').update({ status }).eq('id', poId)); }
 
+  /**
+   * Delete a purchase order outright — for one entered by mistake.
+   *
+   * Refuses once anything on it has been received: those boxes are real stock on a
+   * real shelf, and dropping the PO would either delete them or orphan them from the
+   * invoice they were paid against. Close it short instead. The PO number is not
+   * recycled, so a vendor holding the old email can still be matched to the record
+   * in the activity log.
+   */
+  async deletePo(poId) {
+    const po = ok(await this.sb.from('purchase_orders').select('*').eq('id', poId).single());
+    const boxes = await fetchAll(() => this.sb.from('boxes').select('id,state').eq('po_id', poId));
+    const received = boxes.filter((b) => b.state !== 'on_order');
+    if (received.length) {
+      throw new Error(`${received.length} box(es) on ${po.num} have already been received. Use "Close short" instead — deleting would remove stock that's on the shelf.`);
+    }
+    ok(await this.sb.from('boxes').delete().eq('po_id', poId));
+    ok(await this.sb.from('payments').delete().eq('po_num', po.num).eq('hall_id', po.hall_id));
+    ok(await this.sb.from('po_lines').delete().eq('po_id', poId));       // FK cascade also covers this
+    ok(await this.sb.from('purchase_orders').delete().eq('id', poId));
+    await this.logEvent('po.delete', 'purchase_orders', po.num, {
+      label: `${po.hall_id === 'sc' ? 'Santa Clara' : 'Redwood City'} — deleted PO ${po.num}`,
+      total: po.total, vendor_id: po.vendor_id, boxes: boxes.length,
+    });
+    return po;
+  }
+
   // ---- boxes ----
   async getBoxes(hallId) { return fetchAll(() => this.sb.from('boxes').select('*').eq('hall_id', hallId).order('id')); }
   async updateBox(id, fields) { return ok(await this.sb.from('boxes').update(fields).eq('id', id).select().single()); }

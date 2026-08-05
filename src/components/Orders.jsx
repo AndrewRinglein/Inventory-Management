@@ -10,10 +10,12 @@ const STATUS = {
 };
 
 export default function Orders() {
-  const { hall, pos, boxes, vendors, store, reloadHall, setToast, setScreen, setReceivingPo, can } = useContext(AppCtx);
+  const { hall, pos, boxes, vendors, store, reloadHall, setToast, setScreen, setReceivingPo, requirePin, can } = useContext(AppCtx);
   const [sel, setSel] = useState(null);
   const [lines, setLines] = useState([]);
   const [emails, setEmails] = useState([]);
+  const [confirmDel, setConfirmDel] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   const vmap = useMemo(() => Object.fromEntries(vendors.map((v) => [v.id, v])), [vendors]);
   const sorted = [...pos].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
@@ -41,6 +43,24 @@ export default function Orders() {
     await store.setPoStatus(cur.id, 'closed');
     await reloadHall();
     setToast(`Order closed short — ${stragglers.length} undelivered box(es) marked missing`);
+  };
+
+  // an order that was entered by mistake. Anything already received blocks it —
+  // the store refuses too, this is just so the button explains itself first.
+  const receivedOnCur = boxes.filter((b) => b.po_id === cur?.id && b.state !== 'on_order').length;
+
+  const doDelete = async () => {
+    if (busy) return;
+    if (!(await requirePin())) return;
+    setBusy(true);
+    try {
+      await store.deletePo(cur.id);
+      await reloadHall();
+      setSel(null); setConfirmDel(false);
+      setToast(`PO ${cur.num} deleted`);
+    } catch (e) {
+      setToast(e.message || 'Could not delete that order', null, 8000);
+    } finally { setBusy(false); }
   };
 
   return (
@@ -81,6 +101,11 @@ export default function Orders() {
               {can('receive') && cur.status === 'partial' && (
                 <button className="btn ghost sm" onClick={closeShort}>Close short</button>
               )}
+              {can('order') && (
+                <button className="btn ghost sm" onClick={() => setConfirmDel(true)}
+                  title={receivedOnCur ? 'Some of this order is already on the shelf — close it short instead' : 'Delete this order entirely'}
+                  style={{ color: receivedOnCur ? 'var(--ink-3)' : '#a33b2e' }}>Delete</button>
+              )}
             </div>
             <table className="tbl">
               <thead><tr><th className="first">Item</th><th className="r">Qty</th><th className="r">Line total</th><th className="last">Received</th></tr></thead>
@@ -120,6 +145,51 @@ export default function Orders() {
           </div>
         )}
       </div>
+
+      {confirmDel && cur && (
+        <div className="modal-bg" onClick={() => setConfirmDel(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 460 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>Delete PO {cur.num}?</div>
+            {receivedOnCur > 0 ? (
+              <>
+                <p style={{ fontSize: 13 }}>
+                  {receivedOnCur} box{receivedOnCur === 1 ? '' : 'es'} from this order {receivedOnCur === 1 ? 'is' : 'are'} already
+                  in inventory. Deleting the order would take {receivedOnCur === 1 ? 'it' : 'them'} off the shelf and unpick the
+                  invoice {receivedOnCur === 1 ? 'it was' : 'they were'} received against.
+                </p>
+                <p className="dim" style={{ fontSize: 12.5 }}>
+                  Use <b>Close short</b> instead — it keeps what arrived and marks the rest missing.
+                </p>
+                <div style={{ display: 'flex', marginTop: 14 }}>
+                  <div style={{ flex: 1 }} />
+                  <button className="btn ghost" onClick={() => setConfirmDel(false)}>Close</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p style={{ fontSize: 13 }}>
+                  This removes the order, its {lines.length} line{lines.length === 1 ? '' : 's'}, and the{' '}
+                  {boxes.filter((b) => b.po_id === cur.id).length} box{boxes.filter((b) => b.po_id === cur.id).length === 1 ? '' : 'es'} it
+                  put on order. Nothing has been received, so no stock is affected.
+                </p>
+                <p className="dim" style={{ fontSize: 12.5 }}>
+                  {emails.length > 0
+                    ? `Heads up — ${emails.length} email${emails.length === 1 ? ' has' : 's have'} already gone out on this PO. The distributor still has it, so tell them it's cancelled.`
+                    : 'No emails went out on this one.'}
+                  {' '}The number {cur.num} won't be reused, and the deletion is recorded in Recent Activity.
+                </p>
+                <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+                  <button className="btn" style={{ background: '#a33b2e', color: '#fff' }} disabled={busy} onClick={doDelete}>
+                    {busy ? 'Deleting…' : `Delete ${cur.num}`}
+                  </button>
+                  <div style={{ flex: 1 }} />
+                  <button className="btn ghost" onClick={() => setConfirmDel(false)}>Cancel</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
