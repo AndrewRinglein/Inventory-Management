@@ -2,8 +2,14 @@
 
 export const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 
+// Postgres numeric columns arrive over the wire as STRINGS ("64.60"), so every
+// money helper coerces first. A string has its own toLocaleString that quietly
+// ignores the options, which would drop thousands separators and cents.
 export const fmtMoney = (n) =>
-  '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** $ per ticket as a number — same string-from-the-API trap as above. */
+export const ticketPrice = (p) => Number(p?.price_per_ticket) || 1;
 
 /** Display name for a PO line: cleaned name + (tickets/$price) so vendors see the full spec. */
 export function lineName(product) {

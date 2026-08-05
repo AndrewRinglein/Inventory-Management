@@ -2,7 +2,9 @@ import React, { useContext, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
 import { needsCost, needsType, needsTickets, needsAnyUpdate, productsNeedingUpdate } from '../lib/logic/setup.js';
 import { REAL_TYPES } from '../lib/logic/categories.js';
+import { ticketPrice } from '../lib/logic/po.js';
 import AskDistributor from './AskDistributor.jsx';
+import UpdateGame from './UpdateGame.jsx';
 
 const TIX_FILTERS = [
   ['', 'All'], ['lt1000', 'Under 1,000'], ['1to2k', '1,000 – 1,999'],
@@ -22,6 +24,7 @@ export default function Games() {
   const [showOrig, setShowOrig] = useState(false);
   const [onlyUnpriced, setOnlyUnpriced] = useState(false);
   const [asking, setAsking] = useState(false);
+  const [editPid, setEditPid] = useState(null);
   const [ng, setNg] = useState({ name: '', vendor_id: 'bv', type: 'flash', cost: '', tickets: '', price: '1' });
 
   const vmap = useMemo(() => Object.fromEntries(vendors.map((v) => [v.id, v])), [vendors]);
@@ -32,7 +35,7 @@ export default function Games() {
     .filter((p) => !onlyUnpriced || needsAnyUpdate(p))
     .filter((p) => !vendorF || p.vendor_id === vendorF)
     .filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase()))
-    .filter((p) => !priceF || String(p.price_per_ticket || 1) === priceF)
+    .filter((p) => !priceF || String(ticketPrice(p)) === priceF)
     .filter((p) => tixMatch(p.tickets, tixF))
     .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -70,6 +73,7 @@ export default function Games() {
   return (
     <div>
       {asking && <AskDistributor onClose={() => setAsking(false)} />}
+      {editPid && <UpdateGame product={products.find((p) => p.id === editPid)} onClose={() => setEditPid(null)} />}
       <div className="page-head">
         <div className="h1">{editable ? 'Add / Update Games' : 'Game Catalog'}</div>
         {!editable && <span className="badge b-gray">read-only — catalog edits are Super Admin only</span>}
@@ -172,7 +176,13 @@ export default function Games() {
                     disabled={!editable} defaultValue={p.tickets ?? ''} key={p.id + '_t' + p.tickets}
                     onBlur={(e) => String(p.tickets ?? '') !== e.target.value && edit(p, 'tickets', e.target.value)} style={{ width: 90 }} />
                 </td>
-                <td className="dim" style={{ fontSize: 12 }}>{vmap[p.vendor_id]?.name}</td>
+                <td>
+                  <select value={p.vendor_id} disabled={!editable} onChange={(e) => edit(p, 'vendor_id', e.target.value)}
+                    style={{ fontSize: 12, padding: '3px 4px', width: '100%' }}
+                    title="Move this game to another distributor — future orders go to them">
+                    {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                  </select>
+                </td>
                 <td className="mono dimmer" style={{ fontSize: 11 }}>{p.id}</td>
                 {showOrig && <td className="dimmer" style={{ fontSize: 11 }}>{p.orig_name}</td>}
                 <td>
@@ -190,12 +200,14 @@ export default function Games() {
                     onBlur={(e) => String(p.cost) !== e.target.value && edit(p, 'cost', e.target.value)} style={{ width: 84 }} />
                 </td>
                 <td>
-                  <select value={String(p.price_per_ticket || 1)} disabled={!editable} onChange={(e) => edit(p, 'price_per_ticket', e.target.value)}
+                  <select value={String(ticketPrice(p))} disabled={!editable} onChange={(e) => edit(p, 'price_per_ticket', e.target.value)}
                     style={{ fontSize: 12, padding: '3px 4px', width: '100%' }} className="mono">
                     <option value="1">$1</option><option value="2">$2</option>
                   </select>
                 </td>
-                <td className="last">
+                <td className="last" style={{ whiteSpace: 'nowrap' }}>
+                  {editable && <><button className="btn ghost sm" onClick={() => setEditPid(p.id)}
+                    title="Edit everything about this game">Edit</button>{' '}</>}
                   {needsCost(p)
                     ? <span className="badge b-gold" title="Set a unit cost to make this orderable">can't order</span>
                     : (p.id.startsWith('C') && <span className="badge b-green">new</span>)}

@@ -1,6 +1,6 @@
 import React, { useContext, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
-import { fmtMoney, buildDrafts } from '../lib/logic/po.js';
+import { fmtMoney, buildDrafts, ticketPrice } from '../lib/logic/po.js';
 import { countByProduct } from '../lib/logic/boxes.js';
 import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.js';
 import { needsCost, needsType, needsTickets } from '../lib/logic/setup.js';
@@ -30,7 +30,7 @@ const sortVal = (p, k, cnt) => {
   const c = cnt[p.id] || {};
   switch (k) {
     case 'tickets': return p.tickets || 0;
-    case 'price': return p.price_per_ticket || 1;
+    case 'price': return ticketPrice(p);
     case 'vendor': return p.vendor_id || '';
     case 'type': return p.type || '';
     case 'cost': return Number(p.cost) || 0;
@@ -78,7 +78,7 @@ export default function Purchase() {
       (!q || p.name.toLowerCase().includes(q.toLowerCase())) &&
       passesFilters(p, { type: typeF, misc: miscF }) &&
       tixMatch(p.tickets, tixF) &&
-      (!priceF || String(p.price_per_ticket || 1) === priceF) &&
+      (!priceF || String(ticketPrice(p)) === priceF) &&
       stockMatch(p, stockOf(p), cnt[p.id]?.onorder || 0, stockF)
     ))
     .sort((a, b) => {
@@ -185,7 +185,7 @@ export default function Purchase() {
                 <tr key={p.id} className={n ? 'hl' : ''}>
                   <td className="first">{p.name}</td>
                   <td className="r mono">{needsTickets(p) ? <Upd p={p} /> : (p.tickets ? p.tickets.toLocaleString() : '—')}</td>
-                  <td className="r mono dim">${p.price_per_ticket || 1}</td>
+                  <td className="r mono dim">${ticketPrice(p)}</td>
                   <td className="dim" style={{ fontSize: 12 }}>{vmap[p.vendor_id]?.name}</td>
                   <td className="dimmer" style={{ fontSize: 12 }}>{needsType(p) ? <Upd p={p} /> : p.type}</td>
                   <td className="r mono">

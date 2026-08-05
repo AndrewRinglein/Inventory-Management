@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { poTotals, nextPoNum, buildDrafts, lineName, round2, packingLine } from '../src/lib/logic/po.js';
+import { poTotals, nextPoNum, buildDrafts, lineName, round2, packingLine, fmtMoney, ticketPrice } from '../src/lib/logic/po.js';
 import { canTransition, transition, countByProduct } from '../src/lib/logic/boxes.js';
 import { resolveScan } from '../src/lib/logic/scan.js';
 import { buildOrderEmails, buildDeliveredEmail, buildShortageEmail, senderFor } from '../src/lib/logic/emails.js';
@@ -571,4 +571,29 @@ test('a plain string address still works everywhere', () => {
   const [d] = buildDrafts({ A: 1 }, P, V);
   const [e] = buildOrderEmails([{ ...d, num: 'N1' }], V, 'Santa Clara', '1 Hall Way', '', { name: 'Sagit' });
   assert.match(e.body, /Please deliver to:\n1 Hall Way/);
+});
+
+// ---- numbers arrive from Postgres as strings ----
+test('$ per ticket survives the string form the API sends', () => {
+  assert.equal(ticketPrice({ price_per_ticket: '1.00' }), 1, 'this is what broke the catalog filter');
+  assert.equal(ticketPrice({ price_per_ticket: '2.00' }), 2);
+  assert.equal(ticketPrice({ price_per_ticket: 2 }), 2);
+  assert.equal(ticketPrice({}), 1, 'default to $1');
+  assert.equal(ticketPrice(null), 1);
+  assert.equal(ticketPrice({ price_per_ticket: '0' }), 1, 'zero is not a real ticket price');
+});
+
+test('a filter comparing $ per ticket as text now matches', () => {
+  const rows = [{ price_per_ticket: '1.00' }, { price_per_ticket: '2.00' }, { price_per_ticket: '1.00' }];
+  assert.equal(rows.filter((p) => String(ticketPrice(p)) === '1').length, 2);
+  assert.equal(rows.filter((p) => String(ticketPrice(p)) === '2').length, 1);
+  // the old expression, kept as a reminder of the bug it caused
+  assert.equal(rows.filter((p) => String(p.price_per_ticket || 1) === '1').length, 0);
+});
+
+test('money formats properly even when the value is a string', () => {
+  assert.equal(fmtMoney('1234.5'), '$1,234.50');
+  assert.equal(fmtMoney('64.60'), '$64.60');
+  assert.equal(fmtMoney(1234.5), '$1,234.50');
+  assert.equal(fmtMoney(null), '$0.00');
 });

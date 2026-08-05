@@ -1,6 +1,6 @@
 import React, { useContext, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
-import { fmtMoney } from '../lib/logic/po.js';
+import { fmtMoney, ticketPrice } from '../lib/logic/po.js';
 import { countByProduct } from '../lib/logic/boxes.js';
 
 import { SESSIONS } from '../lib/sessions.js';
@@ -64,7 +64,7 @@ export default function Inventory() {
         p, c, value,
         s: {
           name: p.name.toLowerCase(), vendor: vmap[p.vendor_id]?.name || '', type: p.type,
-          tickets: p.tickets || 0, price: p.price_per_ticket || 1, cost: p.cost,
+          tickets: p.tickets || 0, price: ticketPrice(p), cost: Number(p.cost) || 0,
           inv: c.inv || 0, open: c.open || 0, onorder: c.onorder || 0, value,
           assigned: Object.keys(asg).join(', '),
         },
@@ -188,7 +188,7 @@ export default function Inventory() {
             {COLS.map((c) => (
               <th key={c.key} className={'sortable' + (c.r ? ' r' : '')} onClick={() => sortBy(c.key)}>{c.label}{arrow(c.key)}</th>
             ))}
-            <th className="last" style={{ width: 150 }} />
+            <th className="last" style={{ width: 200 }} />
           </tr></thead>
           <tbody>
             {rows.map((r) => (
@@ -200,7 +200,7 @@ export default function Inventory() {
                 <td className="dim" style={{ fontSize: 12 }}>{vmap[r.p.vendor_id]?.name}</td>
                 <td className="dimmer" style={{ fontSize: 12 }}>{needsType(r.p) ? <Upd p={r.p} /> : r.p.type}</td>
                 <td className="r mono">{needsTickets(r.p) ? <Upd p={r.p} /> : (r.p.tickets ? r.p.tickets.toLocaleString() : '—')}</td>
-                <td className="r mono dim">${r.p.price_per_ticket || 1}</td>
+                <td className="r mono dim">${ticketPrice(r.p)}</td>
                 <td className="r mono">{needsCost(r.p) ? <Upd p={r.p} /> : fmtMoney(r.p.cost)}</td>
                 <td className="r mono">
                   {adjustMode
@@ -219,7 +219,9 @@ export default function Inventory() {
                   {editable ? (<>
                     <button className="btn green sm" disabled={r.avail <= 0}
                       onClick={() => { setAssignPid(r.p.id); setAssignQty(1); }}>Assign</button>{' '}
-                    <button className="btn orange sm" disabled={(r.c.inv || 0) <= 0} onClick={() => openOne(r)}>Open</button>
+                    <button className="btn orange sm" disabled={(r.c.inv || 0) <= 0} onClick={() => openOne(r)}>Open</button>{' '}
+                    <button className="btn ghost sm" title="Edit this game — name, distributor, type, price, tickets"
+                      onClick={() => setUpdPid(r.p.id)}>Edit</button>
                   </>) : <span className="dimmer" style={{ fontSize: 11 }}>read-only</span>}
                 </td>
               </tr>
