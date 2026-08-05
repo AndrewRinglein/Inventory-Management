@@ -101,3 +101,4 @@ input.num { text-align: right; font-family: 'IBM Plex Mono', monospace; }
 .needs-update { border-color:#d8c58a !important; background:#fdfaf1 !important; }
 .needs-update::placeholder { color:#8a6d1f; font-weight:600; opacity:1; }
 select.needs-update { color:#8a6d1f; font-weight:600; }
+.nav-badge.gold { background: var(--gold); }

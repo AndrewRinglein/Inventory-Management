@@ -99,6 +99,38 @@ export class SupabaseStore {
   async createBoxes(list) { return ok(await this.sb.from('boxes').insert(list).select()); }
   async setBoxSession(ids, tag) { ok(await this.sb.from('boxes').update({ session_tag: tag }).in('id', ids)); }
 
+  /**
+   * Hand-correct the count for one product. A positive delta adds boxes straight
+   * into stock (a count that came up short in the system); a negative delta marks
+   * boxes missing. Never silently deletes — every adjustment leaves an event with
+   * the note attached, so the count can be explained later.
+   */
+  async adjustStock({ hallId, product, delta, note, label }) {
+    const n = Math.abs(delta);
+    if (!n) return;
+    if (delta > 0) {
+      const rows = Array.from({ length: n }, () => ({
+        hall_id: hallId, product_id: product.id, state: 'in_inventory',
+        cost: Number(product.cost) || 0, serial: '', received_at: new Date().toISOString(),
+      }));
+      ok(await this.sb.from('boxes').insert(rows));
+    } else {
+      const pool = ok(await this.sb.from('boxes').select('id')
+        .eq('hall_id', hallId).eq('product_id', product.id).eq('state', 'in_inventory')
+        .is('session_tag', null).limit(n));
+      const ids = pool.map((b) => b.id);
+      if (ids.length < n) {   // fall back to set-aside boxes only if we must
+        const extra = ok(await this.sb.from('boxes').select('id')
+          .eq('hall_id', hallId).eq('product_id', product.id).eq('state', 'in_inventory')
+          .not('session_tag', 'is', null).limit(n - ids.length));
+        ids.push(...extra.map((b) => b.id));
+      }
+      if (!ids.length) throw new Error('No boxes in stock to remove');
+      ok(await this.sb.from('boxes').update({ state: 'missing' }).in('id', ids));
+    }
+    await this.logEvent('adjust', 'products', product.id, { label, note, delta, hall: hallId });
+  }
+
   // ---- receiving ----
   async createShipment(s) { return ok(await this.sb.from('shipments').insert(s).select().single()); }
   async confirmShipment(id) { return ok(await this.sb.from('shipments').update({ confirmed: true }).eq('id', id).select().single()); }

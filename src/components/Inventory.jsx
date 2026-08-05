@@ -28,6 +28,10 @@ export default function Inventory() {
   const [assignPid, setAssignPid] = useState(null);
   const [assignTag, setAssignTag] = useState('');
   const [assignQty, setAssignQty] = useState(1);
+  const [adjustMode, setAdjustMode] = useState(false);
+  const [adj, setAdj] = useState(null);      // { p, from, to }
+  const [adjNote, setAdjNote] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const vmap = useMemo(() => Object.fromEntries(vendors.map((v) => [v.id, v])), [vendors]);
   const cnt = useMemo(() => countByProduct(boxes), [boxes]);
@@ -101,6 +105,28 @@ export default function Inventory() {
     setToast(`${pool.length} box${pool.length > 1 ? 'es' : ''} set aside for ${assignTag.trim()}`);
   };
 
+  // A hand count that disagrees with the system. The note is required — a
+  // count that changes without a reason is worse than no count at all.
+  const saveAdjust = async () => {
+    if (!adj || saving) return;
+    const delta = adj.to - adj.from;
+    if (!delta) { setAdj(null); return; }
+    if (!adjNote.trim()) { setToast('Add a note explaining the change'); return; }
+    setSaving(true);
+    const sign = delta > 0 ? '+' : '−';
+    try {
+      await store.adjustStock({
+        hallId: hall, product: adj.p, delta, note: adjNote.trim(),
+        label: `${hall === 'sc' ? 'Santa Clara' : 'Redwood City'} — ${adj.p.name} ${sign}${Math.abs(delta)} (${adj.from} → ${adj.to})`,
+      });
+      await reloadHall();
+      setAdj(null); setAdjNote('');
+      setToast(`${adj.p.name}: ${adj.from} → ${adj.to} boxes`);
+    } catch (e) {
+      setToast(e.message || 'Could not adjust that count');
+    } finally { setSaving(false); }
+  };
+
   const clearAssign = async () => {
     const ids = boxes.filter((b) => b.product_id === assignPid && b.session_tag).map((b) => b.id);
     await store.setBoxSession(ids, null);
@@ -121,7 +147,19 @@ export default function Inventory() {
         </select>
         <div className="grow" />
         <span className="dim" style={{ fontSize: 13 }}>{rows.length} products with stock · owned value <b className="mono">{fmtMoney(rows.totVal)}</b></span>
+        {editable && (
+          <button className={'btn ' + (adjustMode ? 'orange' : 'ghost')} onClick={() => setAdjustMode(!adjustMode)}
+            title="Hand-correct a count that doesn't match the shelf">
+            {adjustMode ? '🔓 Done adjusting' : '🔒 Adjust inventory'}
+          </button>
+        )}
       </div>
+      {adjustMode && (
+        <div className="demo-banner" style={{ background: '#fdf3e7', borderColor: '#e2c39a' }}>
+          <b>Adjust mode is on.</b> Click any <b>In stock</b> number to set what's actually on the shelf.
+          Every change needs a note and shows up in Recent Activity.
+        </div>
+      )}
       <div className="card" style={{ overflow: 'hidden' }}>
         <table className="tbl">
           <thead><tr>
@@ -147,7 +185,15 @@ export default function Inventory() {
                 <td className="r mono">{needsTickets(r.p) ? UPD : (r.p.tickets ? r.p.tickets.toLocaleString() : '—')}</td>
                 <td className="r mono dim">${r.p.price_per_ticket || 1}</td>
                 <td className="r mono">{needsCost(r.p) ? UPD : fmtMoney(r.p.cost)}</td>
-                <td className="r mono"><b>{r.c.inv || 0}</b></td>
+                <td className="r mono">
+                  {adjustMode
+                    ? <button className="btn ghost sm" style={{ fontFamily: 'inherit', minWidth: 46 }}
+                        title="Set the real shelf count"
+                        onClick={() => { setAdj({ p: r.p, from: r.c.inv || 0, to: r.c.inv || 0 }); setAdjNote(''); }}>
+                        <b>{r.c.inv || 0}</b> ✎
+                      </button>
+                    : <b>{r.c.inv || 0}</b>}
+                </td>
                 <td className="r mono" style={{ color: 'var(--orange)' }}>{r.c.open || 0}</td>
                 <td className="r mono dimmer">{r.c.onorder || 0}</td>
                 <td className="r mono">{r.value ? fmtMoney(r.value) : '—'}</td>
@@ -165,6 +211,45 @@ export default function Inventory() {
         </table>
         {rows.length === 0 && <div style={{ padding: 30, textAlign: 'center' }} className="dimmer">No products match.</div>}
       </div>
+
+      {adj && (
+        <div className="modal-bg" onClick={() => setAdj(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>Adjust inventory</div>
+            <p className="dim" style={{ fontSize: 12.5, marginBottom: 14 }}>{adj.p.name}</p>
+            <div style={{ display: 'flex', gap: 14, alignItems: 'flex-end' }}>
+              <div className="field" style={{ margin: 0 }}><label>System says</label>
+                <div className="mono" style={{ fontSize: 22, fontWeight: 700, padding: '4px 0' }}>{adj.from}</div></div>
+              <div style={{ fontSize: 20, color: 'var(--ink-2)', paddingBottom: 8 }}>→</div>
+              <div className="field" style={{ margin: 0 }}><label>Actually on the shelf</label>
+                <input className="num" type="number" min="0" autoFocus value={adj.to}
+                  onChange={(e) => setAdj({ ...adj, to: Math.max(0, parseInt(e.target.value) || 0) })}
+                  style={{ width: 110, fontSize: 20, fontWeight: 700 }} /></div>
+              <div style={{ paddingBottom: 10, fontWeight: 700, fontSize: 14, color: adj.to > adj.from ? 'var(--green)' : adj.to < adj.from ? 'var(--orange)' : 'var(--ink-2)' }}>
+                {adj.to === adj.from ? 'no change' : (adj.to > adj.from ? `+${adj.to - adj.from}` : `−${adj.from - adj.to}`) + ' boxes'}
+              </div>
+            </div>
+            <div className="field" style={{ marginTop: 14 }}><label>Note — why is it different? (required)</label>
+              <input type="text" value={adjNote} placeholder="e.g. two boxes damaged in the back room"
+                onChange={(e) => setAdjNote(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && saveAdjust()} style={{ width: '100%' }} /></div>
+            <p className="dimmer" style={{ fontSize: 11.5, marginTop: 8 }}>
+              {adj.to < adj.from
+                ? 'Removed boxes are marked missing, not deleted — the history stays intact.'
+                : adj.to > adj.from
+                  ? `Added boxes are valued at ${fmtMoney(adj.p.cost)} each, this hall's current unit cost.`
+                  : 'Set a different number to record an adjustment.'}
+            </p>
+            <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+              <button className="btn primary" disabled={adj.to === adj.from || !adjNote.trim() || saving} onClick={saveAdjust}>
+                {saving ? 'Saving…' : 'Save adjustment'}
+              </button>
+              <div style={{ flex: 1 }} />
+              <button className="btn ghost" onClick={() => setAdj(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {assignPid && (
         <div className="modal-bg" onClick={() => setAssignPid(null)}>

@@ -149,6 +149,27 @@ export class DemoStore {
     this._save();
   }
 
+  async adjustStock({ hallId, product, delta, note, label }) {
+    const n = Math.abs(delta);
+    if (!n) return;
+    if (delta > 0) {
+      for (let i = 0; i < n; i++) {
+        this.db.boxes.push({
+          id: uid(), hall_id: hallId, product_id: product.id, state: 'in_inventory',
+          cost: Number(product.cost) || 0, serial: '', session_tag: null,
+          ordered_at: new Date().toISOString(), received_at: new Date().toISOString(),
+        });
+      }
+    } else {
+      const pool = this.db.boxes.filter((b) => b.hall_id === hallId && b.product_id === product.id && b.state === 'in_inventory');
+      pool.sort((a, b) => (a.session_tag ? 1 : 0) - (b.session_tag ? 1 : 0));   // untouched boxes first
+      if (!pool.length) throw new Error('No boxes in stock to remove');
+      for (const b of pool.slice(0, n)) b.state = 'missing';
+    }
+    this._event('adjust', 'products', product.id, { label, note, delta, hall: hallId });
+    this._save();
+  }
+
   // ---- receiving ----
   async createShipment(s) {
     const row = { id: uid(), confirmed: false, received_at: new Date().toISOString(), ...s };

@@ -1,8 +1,9 @@
 import React, { useContext } from 'react';
 import { AppCtx } from '../App.jsx';
+import { productsNeedingUpdate } from '../lib/logic/setup.js';
 
 export default function Sidebar() {
-  const { hall, setHall, screen, setScreen, payments, pos, store, role, roleLabel, can, IS_SANDBOX } = useContext(AppCtx);
+  const { hall, setHall, screen, setScreen, payments, pos, products, store, role, roleLabel, can, IS_SANDBOX } = useContext(AppCtx);
   const demoHref = (on) => {
     const u = new URL(window.location.href);
     if (on) u.searchParams.set('demo', ''); else u.searchParams.delete('demo');
@@ -10,11 +11,12 @@ export default function Sidebar() {
   };
   const openPay = payments.filter((p) => p.status === 'open').length;
   const openPos = pos.filter((p) => p.status === 'sent' || p.status === 'partial').length;
+  const toUpdate = productsNeedingUpdate(products).length;
 
-  const Item = ({ id, label, badge }) => (
-    <div className={'nav-item' + (screen === id ? ' active' : '')} onClick={() => setScreen(id)}>
+  const Item = ({ id, label, badge, gold, title }) => (
+    <div className={'nav-item' + (screen === id ? ' active' : '')} onClick={() => setScreen(id)} title={title || ''}>
       <span>{label}</span>
-      {badge ? <span className="nav-badge">{badge}</span> : null}
+      {badge ? <span className={'nav-badge' + (gold ? ' gold' : '')}>{badge}</span> : null}
     </div>
   );
 
@@ -38,7 +40,9 @@ export default function Sidebar() {
       <Item id="accounting" label="Accounting" badge={openPay || null} />
       <Item id="intake" label="Receiving" />
       <div className="sb-sec">Admin</div>
-      <Item id="games" label={can('editCatalog') ? 'Add / Update Games' : 'Game Catalog'} />
+      <Item id="games" label={can('editCatalog') ? 'Add / Update Games' : 'Game Catalog'}
+        badge={toUpdate || null} gold
+        title={toUpdate ? `${toUpdate} item${toUpdate === 1 ? '' : 's'} have a blank cost, ticket count or type` : ''} />
       {can('settings') && <Item id="settings" label="Settings" />}
       <div className="sb-sec">Training</div>
       {IS_SANDBOX ? (

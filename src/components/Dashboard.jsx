@@ -64,10 +64,13 @@ export default function Dashboard() {
             {events.map((e, i) => (
               <div key={i} style={{ padding: '8px 16px', borderBottom: '1px solid var(--border-lt)', fontSize: 12.5 }}>
                 <span className="dimmer mono" style={{ fontSize: 11 }}>{new Date(e.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>{' '}
-                <span className={'badge ' + (e.kind === 'eom' ? 'b-green' : 'b-teal')} style={{ margin: '0 6px' }}>{e.kind === 'eom' ? 'EOM' : e.kind}</span>
+                <span className={'badge ' + (e.kind === 'eom' ? 'b-green' : e.kind === 'adjust' ? 'b-orange' : 'b-teal')} style={{ margin: '0 6px' }}>
+                  {e.kind === 'eom' ? 'EOM' : e.kind}
+                </span>
                 {e.detail?.label
-                  ? <b style={{ color: 'var(--green)' }}>{e.detail.label}</b>
+                  ? <b style={{ color: e.kind === 'adjust' ? 'var(--orange)' : 'var(--green)' }}>{e.detail.label}</b>
                   : <span className="dim">{e.entity} {String(e.entity_id).slice(0, 14)}</span>}
+                {e.detail?.note && <div className="dim" style={{ fontSize: 11.5, marginTop: 2, paddingLeft: 2 }}>“{e.detail.note}”</div>}
               </div>
             ))}
           </div>
