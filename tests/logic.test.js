@@ -338,14 +338,25 @@ test('a blank type is flagged for update, but guarantee is a real type', () => {
   assert.equal(needsType({ name: 'Cowgirls', type: 'flash' }), false);
 });
 
-test('games need a ticket count; paper and daubers do not', () => {
+test('only flash games need a ticket count', () => {
   assert.equal(needsTickets({ name: 'Cowgirls', type: 'flash', tickets: null }), true);
-  assert.equal(needsTickets({ name: 'Lucky Strip', type: 'strip', tickets: 0 }), true);
   assert.equal(needsTickets({ name: 'Cowgirls', type: 'flash', tickets: 1440 }), false);
+  assert.equal(needsTickets({ name: 'Lucky Strip', type: 'strip', tickets: 0 }), false,
+    'strips sell as a pack, so a ticket count is meaningless');
   assert.equal(needsTickets({ name: 'Red,White and Blue paper', type: 'paper' }), false);
+  assert.equal(needsTickets({ name: 'Guarantee- Comics', type: 'guarantee' }), false);
   assert.equal(needsTickets({ name: '$2 DAUBERS — Blue', type: 'supply' }), false);
+  assert.equal(needsTickets({ name: 'Caribbean Gold', type: null }), false,
+    'ask for the type first — the ticket question only makes sense once it is flash');
   assert.equal(needsTickets({ name: 'Big Five cherry ticket', type: 'flash' }), false,
     'cherry cases sell by the ticket and are counted, not boxed');
+});
+
+test('retyping a flash game as a strip clears its ticket requirement', () => {
+  const before = { name: 'Bingo Shark', type: 'flash', cost: 64.6, tickets: null };
+  assert.equal(needsAnyUpdate(before), true);
+  const after = { ...before, type: 'strip' };
+  assert.equal(needsAnyUpdate(after), false, 'one edit clears every update tag on the row');
 });
 
 test('only a missing cost blocks ordering; other gaps just ask for an update', () => {

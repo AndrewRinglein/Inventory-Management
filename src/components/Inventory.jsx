@@ -6,8 +6,7 @@ import { countByProduct } from '../lib/logic/boxes.js';
 import { SESSIONS } from '../lib/sessions.js';
 import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.js';
 import { needsCost, needsType, needsTickets } from '../lib/logic/setup.js';
-
-const UPD = <span className="badge b-gold">update</span>;
+import UpdateGame from './UpdateGame.jsx';
 
 const COLS = [
   { key: 'vendor', label: 'Vendor' }, { key: 'type', label: 'Type' },
@@ -32,6 +31,13 @@ export default function Inventory() {
   const [adj, setAdj] = useState(null);      // { p, from, to }
   const [adjNote, setAdjNote] = useState('');
   const [saving, setSaving] = useState(false);
+  const [updPid, setUpdPid] = useState(null);
+
+  // the gold 'update' chip: click it to fill the blank in place
+  const Upd = ({ p }) => (
+    <button className="badge b-gold" style={{ border: 0, cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: 600 }}
+      title="Click to fill this in" onClick={() => setUpdPid(p.id)}>update</button>
+  );
 
   const vmap = useMemo(() => Object.fromEntries(vendors.map((v) => [v.id, v])), [vendors]);
   const cnt = useMemo(() => countByProduct(boxes), [boxes]);
@@ -181,10 +187,10 @@ export default function Inventory() {
                   {needsCost(r.p) && <span className="badge b-gold" style={{ marginLeft: 6 }} title="No unit cost — can't be ordered or received until set">can't order</span>}
                 </td>
                 <td className="dim" style={{ fontSize: 12 }}>{vmap[r.p.vendor_id]?.name}</td>
-                <td className="dimmer" style={{ fontSize: 12 }}>{needsType(r.p) ? UPD : r.p.type}</td>
-                <td className="r mono">{needsTickets(r.p) ? UPD : (r.p.tickets ? r.p.tickets.toLocaleString() : '—')}</td>
+                <td className="dimmer" style={{ fontSize: 12 }}>{needsType(r.p) ? <Upd p={r.p} /> : r.p.type}</td>
+                <td className="r mono">{needsTickets(r.p) ? <Upd p={r.p} /> : (r.p.tickets ? r.p.tickets.toLocaleString() : '—')}</td>
                 <td className="r mono dim">${r.p.price_per_ticket || 1}</td>
-                <td className="r mono">{needsCost(r.p) ? UPD : fmtMoney(r.p.cost)}</td>
+                <td className="r mono">{needsCost(r.p) ? <Upd p={r.p} /> : fmtMoney(r.p.cost)}</td>
                 <td className="r mono">
                   {adjustMode
                     ? <button className="btn ghost sm" style={{ fontFamily: 'inherit', minWidth: 46 }}
@@ -211,6 +217,8 @@ export default function Inventory() {
         </table>
         {rows.length === 0 && <div style={{ padding: 30, textAlign: 'center' }} className="dimmer">No products match.</div>}
       </div>
+
+      {updPid && <UpdateGame product={products.find((p) => p.id === updPid)} onClose={() => setUpdPid(null)} />}
 
       {adj && (
         <div className="modal-bg" onClick={() => setAdj(null)}>

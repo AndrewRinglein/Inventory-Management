@@ -11,9 +11,13 @@ import { isMisc } from './categories.js';
 /** Type was never set. */
 export const needsType = (p) => !p || !p.type;
 
-/** Games sold by the ticket need a count. Paper and dauber supplies don't. */
+/**
+ * Only flash games are counted in tickets. Strips, paper, guarantee numbers and
+ * dauber supplies sell as a unit, so a ticket count would be meaningless — and a
+ * field nobody can fill is worse than no field at all.
+ */
 export const needsTickets = (p) =>
-  !!p && !isMisc(p) && p.type !== 'paper' && !(Number(p.tickets) > 0);
+  !!p && p.type === 'flash' && !isMisc(p) && !(Number(p.tickets) > 0);
 
 /** No unit cost — this is the one that blocks ordering and receiving. */
 export const needsCost = (p) => !p || !(Number(p.cost) > 0);

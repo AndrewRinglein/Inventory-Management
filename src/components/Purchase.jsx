@@ -4,8 +4,7 @@ import { fmtMoney, buildDrafts } from '../lib/logic/po.js';
 import { countByProduct } from '../lib/logic/boxes.js';
 import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.js';
 import { needsSetup, needsCost, needsType, needsTickets, productsNeedingSetup } from '../lib/logic/setup.js';
-
-const UPD = <span className="badge b-gold">update</span>;
+import UpdateGame from './UpdateGame.jsx';
 
 const TIX_FILTERS = [
   ['', 'All'], ['lt1000', '< 1,000'], ['1to2k', '1,000–1,999'],
@@ -53,6 +52,7 @@ export default function Purchase() {
   const [stockF, setStockF] = useState('');
   const [sortKey, setSortKey] = useState('name');
   const [dir, setDir] = useState(1);
+  const [updPid, setUpdPid] = useState(null);
 
   const cnt = useMemo(() => countByProduct(boxes), [boxes]);
   const unpriced = useMemo(() => productsNeedingSetup(products), [products]);
@@ -63,6 +63,11 @@ export default function Purchase() {
   const grand = drafts.reduce((a, d) => a + d.total, 0);
   const lineCount = drafts.reduce((a, d) => a + d.lines.filter((l) => l.kind !== 'fee').length, 0);
   const feeTotal = drafts.reduce((a, d) => a + d.lines.filter((l) => l.kind === 'fee').reduce((x, l) => x + l.qty * l.cost, 0), 0);
+
+  const Upd = ({ p }) => (
+    <button className="badge b-gold" style={{ border: 0, cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: 600 }}
+      title="Click to fill this in" onClick={() => setUpdPid(p.id)}>update</button>
+  );
 
   const stockOf = (p) => (cnt[p.id]?.inv || 0) + (cnt[p.id]?.open || 0);
 
@@ -173,16 +178,18 @@ export default function Purchase() {
               return (
                 <tr key={p.id} className={n ? 'hl' : ''}>
                   <td className="first">{p.name}</td>
-                  <td className="r mono">{needsTickets(p) ? UPD : (p.tickets ? p.tickets.toLocaleString() : '—')}</td>
+                  <td className="r mono">{needsTickets(p) ? <Upd p={p} /> : (p.tickets ? p.tickets.toLocaleString() : '—')}</td>
                   <td className="r mono dim">${p.price_per_ticket || 1}</td>
                   <td className="dim" style={{ fontSize: 12 }}>{vmap[p.vendor_id]?.name}</td>
-                  <td className="dimmer" style={{ fontSize: 12 }}>{needsType(p) ? UPD : p.type}</td>
-                  <td className="r mono">{needsCost(p) ? UPD : fmtMoney(p.cost)}</td>
+                  <td className="dimmer" style={{ fontSize: 12 }}>{needsType(p) ? <Upd p={p} /> : p.type}</td>
+                  <td className="r mono">{needsCost(p) ? <Upd p={p} /> : fmtMoney(p.cost)}</td>
                   <td className="r mono">{(c.inv || 0) + (c.open || 0)}</td>
                   <td className="r mono dimmer">{c.onorder || 0}</td>
                   <td style={{ textAlign: 'center' }}>
                     {needsSetup(p)
-                      ? <span className="badge b-gold" title="Add a unit cost on Add / Update Games before ordering this">needs update</span>
+                      ? <button className="badge b-gold" style={{ border: 0, cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: 600 }}
+                          title="Add a unit cost before ordering this — click to do it now"
+                          onClick={() => setUpdPid(p.id)}>needs update</button>
                       : <input className="qty" type="number" min="0" value={n || ''} placeholder="" disabled={!editable}
                           onChange={(e) => setQty(p.id, e.target.value)} />}
                   </td>
