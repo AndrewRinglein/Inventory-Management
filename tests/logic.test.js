@@ -350,6 +350,8 @@ test('only flash games need a ticket count', () => {
     'ask for the type first — the ticket question only makes sense once it is flash');
   assert.equal(needsTickets({ name: 'Big Five cherry ticket', type: 'flash' }), false,
     'cherry cases sell by the ticket and are counted, not boxed');
+  assert.equal(needsTickets({ name: "Cheery- Thrilling 3's/Bank Busters", type: 'flash' }), false,
+    'the count sheet misspelled cherry — it is still a cherry case');
 });
 
 test('retyping a flash game as a strip clears its ticket requirement', () => {

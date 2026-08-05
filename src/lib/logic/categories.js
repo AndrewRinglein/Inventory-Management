@@ -29,7 +29,9 @@ export const MISC_MODES = [
   { value: 'misc', label: 'Cherry & daubers only' },
 ];
 
-const CHERRY = /cherry/i;
+// "Cheery- Thrilling 3's/Bank Busters" is a cherry case with a typo in the
+// count sheet it came from — match the misspelling too rather than rename it.
+const CHERRY = /ch(err|eer)y/i;
 
 /** Daubers and other supplies, plus cherry-ticket cases. */
 export function isMisc(p) {
