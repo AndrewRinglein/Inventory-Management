@@ -108,3 +108,12 @@ select.needs-update { color:#8a6d1f; font-weight:600; }
        cursor: pointer; padding: 0 4px; font-family: inherit; }
 .tbd:hover { text-decoration: underline; }
 .qty.tbd-qty { border-color: #d8c58a; background: #fdfaf1; }
+
+/* Filters live above the table, never inside the header row — a header should be
+   something you click to sort, not a place a dropdown hides. */
+.filter-bar { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap;
+              padding: 10px 12px; margin-bottom: 10px; background: #fff;
+              border: 1px solid var(--border); border-radius: 8px; }
+.filter-bar label { display: flex; flex-direction: column; gap: 3px; font-size: 11px;
+                    text-transform: uppercase; letter-spacing: 0.6px; color: var(--ink-3); font-weight: 600; }
+.filter-bar select, .filter-bar input { font-size: 12.5px; }

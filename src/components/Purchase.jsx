@@ -93,7 +93,10 @@ export default function Purchase() {
 
   const sortBy = (k) => { if (k === sortKey) setDir(-dir); else { setSortKey(k); setDir(1); } };
   const arrow = (k) => (k === sortKey ? (dir > 0 ? ' ▲' : ' ▼') : '');
-  const stop = (e) => e.stopPropagation();
+  const anyFilter = !!(vendorF || typeF || tixF || priceF || stockF || q || miscF !== 'games');
+  const clearFilters = () => {
+    setVendorF(''); setTypeF(''); setTixF(''); setPriceF(''); setStockF(''); setQ(''); setMiscF('games');
+  };
 
   const setQty = async (pid, v) => {
     const n = Math.max(0, parseInt(v) || 0);
@@ -105,12 +108,6 @@ export default function Purchase() {
     <div>
       <div className="page-head" style={{ position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 10, paddingTop: 6, paddingBottom: 10, borderBottom: '1px solid var(--border)' }}>
         <div className="h1">Purchase — {hall === 'sc' ? 'Santa Clara' : 'Redwood City'}</div>
-        {(vendorF || typeF || tixF || priceF || stockF || q || miscF !== 'games') && (
-          <button className="btn ghost sm" onClick={() => { setVendorF(''); setTypeF(''); setTixF(''); setPriceF(''); setStockF(''); setQ(''); setMiscF('games'); }}>
-            Clear filters
-          </button>
-        )}
-        <span className="dimmer" style={{ fontSize: 12 }}>{rows.length} shown</span>
         <div className="grow" />
         <span className="dim" style={{ fontSize: 13 }}>
           {lineCount ? `${lineCount} lines` : 'Enter quantities to build an order'}
@@ -133,56 +130,54 @@ export default function Purchase() {
           <button className="btn ghost sm" onClick={() => setScreen('games')}>Enter prices instead →</button>
         </div>
       )}
+      <div className="filter-bar">
+        <input type="text" placeholder="Search game…" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 190 }} />
+        <label>Vendor
+          <select value={vendorF} onChange={(e) => setVendorF(e.target.value)}>
+            <option value="">All</option>
+            {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+          </select></label>
+        <label>Type
+          <select value={typeF} onChange={(e) => setTypeF(e.target.value)}>
+            {GAME_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select></label>
+        <label>Misc
+          <select value={miscF} onChange={(e) => setMiscF(e.target.value)} title="Cherry tickets and dauber supplies">
+            {MISC_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </select></label>
+        <label>Tickets
+          <select value={tixF} onChange={(e) => setTixF(e.target.value)}>
+            {TIX_FILTERS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select></label>
+        <label>$ / ticket
+          <select value={priceF} onChange={(e) => setPriceF(e.target.value)}>
+            <option value="">All</option><option value="1">$1</option><option value="2">$2</option>
+          </select></label>
+        <label>Stock
+          <select value={stockF} onChange={(e) => setStockF(e.target.value)}>
+            {STOCK_FILTERS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select></label>
+        <div style={{ flex: 1 }} />
+        <span className="dimmer" style={{ fontSize: 12 }}>{rows.length} shown</span>
+        {anyFilter && <button className="btn ghost sm" onClick={clearFilters}>Clear</button>}
+      </div>
+
       <div className="card" style={{ overflow: 'hidden' }}>
         <table className="tbl">
           <thead><tr>
-            <th className="first sortable" onClick={() => sortBy('name')}>
-              <div>Game{arrow('name')}</div>
-              <input type="text" placeholder="Search…" value={q} onClick={stop}
-                onChange={(e) => setQ(e.target.value)} style={{ fontWeight: 400, marginTop: 3, width: 190 }} />
-            </th>
-            <th className="r sortable" style={{ width: 118 }} onClick={() => sortBy('tickets')}>
-              <div>Tickets{arrow('tickets')}</div>
-              <select value={tixF} onClick={stop} onChange={(e) => setTixF(e.target.value)} style={{ fontWeight: 400, marginTop: 3, width: '100%' }}>
-                {TIX_FILTERS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select>
-            </th>
-            <th className="r sortable" style={{ width: 86 }} onClick={() => sortBy('price')}>
-              <div>$ / ticket{arrow('price')}</div>
-              <select value={priceF} onClick={stop} onChange={(e) => setPriceF(e.target.value)} style={{ fontWeight: 400, marginTop: 3, width: '100%' }}>
-                <option value="">All</option><option value="1">$1</option><option value="2">$2</option>
-              </select>
-            </th>
-            <th className="sortable" style={{ width: 150 }} onClick={() => sortBy('vendor')}>
-              <div>Vendor{arrow('vendor')}</div>
-              <select value={vendorF} onClick={stop} onChange={(e) => setVendorF(e.target.value)} style={{ fontWeight: 400, marginTop: 3, width: '100%' }}>
-                <option value="">All</option>
-                {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-              </select>
-            </th>
-            <th className="sortable" style={{ width: 118 }} onClick={() => sortBy('type')}>
-              <div>Type{arrow('type')}</div>
-              <select value={typeF} onClick={stop} onChange={(e) => setTypeF(e.target.value)} style={{ fontWeight: 400, marginTop: 3, width: '100%' }}>
-                {GAME_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-              </select>
-            </th>
-            <th className="r sortable" style={{ width: 94 }} onClick={() => sortBy('base')} title="What one unit costs">
-              <div>Base ${arrow('base')}</div>
-              <select value={miscF} onClick={stop} onChange={(e) => setMiscF(e.target.value)} style={{ fontWeight: 400, marginTop: 3, width: '100%' }} title="Cherry tickets and dauber supplies">
-                {MISC_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-              </select>
-            </th>
+            <th className="first sortable" onClick={() => sortBy('name')}>Game{arrow('name')}</th>
+            <th className="r sortable" style={{ width: 92 }} onClick={() => sortBy('tickets')}>Tickets{arrow('tickets')}</th>
+            <th className="r sortable" style={{ width: 74 }} onClick={() => sortBy('price')}>$ / tkt{arrow('price')}</th>
+            <th className="sortable" style={{ width: 150 }} onClick={() => sortBy('vendor')}>Vendor{arrow('vendor')}</th>
+            <th className="sortable" style={{ width: 88 }} onClick={() => sortBy('type')}>Type{arrow('type')}</th>
+            <th className="r sortable" style={{ width: 92 }} onClick={() => sortBy('base')} title="What one unit costs">Base ${arrow('base')}</th>
             <th className="r sortable" style={{ width: 48 }} onClick={() => sortBy('units')} title="Units per ordered box">×{arrow('units')}</th>
-            <th className="r sortable" style={{ width: 86 }} onClick={() => sortBy('packing')} title="Packing charged on one ordered box">Packing{arrow('packing')}</th>
-            <th className="r sortable" style={{ width: 104 }} onClick={() => sortBy('cost')} title="Base × units + packing">Box total{arrow('cost')}</th>
-            <th className="r sortable" style={{ width: 110 }} onClick={() => sortBy('live')}>
-              <div>Live{arrow('live')}</div>
-              <select value={stockF} onClick={stop} onChange={(e) => setStockF(e.target.value)} style={{ fontWeight: 400, marginTop: 3, width: '100%' }}>
-                {STOCK_FILTERS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select>
-            </th>
-            <th className="r sortable" onClick={() => sortBy('onorder')}>On order{arrow('onorder')}</th>
-            <th style={{ textAlign: 'center' }}>Order qty</th><th className="r last">Line total</th>
+            <th className="r sortable" style={{ width: 86 }} onClick={() => sortBy('packing')} title="Packing on one ordered box">Packing{arrow('packing')}</th>
+            <th className="r sortable" style={{ width: 106 }} onClick={() => sortBy('cost')} title="Base × units + packing">Box total{arrow('cost')}</th>
+            <th className="r sortable" style={{ width: 66 }} onClick={() => sortBy('live')}>Live{arrow('live')}</th>
+            <th className="r sortable" style={{ width: 78 }} onClick={() => sortBy('onorder')}>On order{arrow('onorder')}</th>
+            <th style={{ textAlign: 'center', width: 96 }}>Order qty</th>
+            <th className="r last" style={{ width: 118 }}>Line total</th>
           </tr></thead>
           <tbody>
             {rows.map((p) => {
