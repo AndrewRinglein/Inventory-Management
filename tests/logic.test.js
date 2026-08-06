@@ -747,7 +747,8 @@ test('a PO line prints base, units, packing and its own total', () => {
 
   assert.match(e.body, /Base\s+Units\s+Packing\s+Line total/, 'a header naming the parts');
   assert.match(e.body, /10-Pack of strips Biker\s+\$64\.00\s+x80\s+\$320\.00\s+\$5,440\.00/);
-  assert.match(e.body, /Pecker Heads\s+\$58\.80\s+\$4\.00\s+\$125\.60/, 'two boxes, packing included');
+  assert.match(e.body, /Pecker Heads\s+\$58\.80\s+\$8\.00\s+\$125\.60/,
+    'two boxes: packing is extended too, so 58.80x2 + 8.00 = 125.60 reads off the row');
   assert.ok(!/Packing — /.test(e.body), 'no lump-sum packing line any more');
 });
 

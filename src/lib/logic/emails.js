@@ -61,10 +61,13 @@ const line = (l) => {
 };
 
 function lineRow(l, w) {
-  const packing = Number(l.packing_each) || 0;
+  const packEach = Number(l.packing_each) || 0;
   const units = Math.max(1, parseInt(l.pack_units) || 1);
   const base = l.base_cost != null ? Number(l.base_cost) : Number(l.cost) || 0;
-  const total = l.price_tbd ? '?' : money(l.qty * (Number(l.cost) + packing));
+  // every money column on the row is extended for the quantity, so the row adds
+  // up as written: base x units x qty, plus packing, equals the line total
+  const packing = packEach * l.qty;
+  const total = l.price_tbd ? '?' : money(l.qty * (Number(l.cost) + packEach));
   return [
     String(l.qty).padStart(4),
     ' x ',
