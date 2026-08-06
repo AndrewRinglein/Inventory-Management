@@ -69,13 +69,13 @@ export function buildDrafts(qty, products, vendors) {
       product_id: pid, name_snapshot: lineName(p), qty: n,
       cost: Number(p.cost) > 0 ? p.cost : 0,
       price_tbd: !(Number(p.cost) > 0),   // ordered before we knew the price
-      kind: 'item', _type: p.type,
+      kind: 'item', _packUnits: Number(p.packing_units) || 0,
     });
   }
   return Object.entries(byVendor).map(([vendorId, rawLines]) => {
     const v = vmap[vendorId];
     rawLines.sort((a, b) => a.name_snapshot.localeCompare(b.name_snapshot));
-    const lines = rawLines.map(({ _type, ...l }) => l);
+    const lines = rawLines.map(({ _packUnits, ...l }) => l);   // internal only, never persisted
     const fee = packingLine(v, rawLines);
     if (fee) lines.push(fee);
     return { vendor_id: vendorId, vendor_name: v.name, lines, ...poTotals(lines, v.tax_rate) };
@@ -83,24 +83,28 @@ export function buildDrafts(qty, products, vendors) {
 }
 
 /**
- * Some vendors add a per-box packing charge on certain product types
- * (Bingo Vision: $4 per box of flash). It becomes a real PO line so the vendor
- * sees it and the total matches their invoice — but kind 'fee' means it never
- * creates an inventory box.
- * Returns null when the vendor charges nothing or nothing qualifying was ordered.
+ * Some vendors add a packing surcharge — Bingo Vision charges $4 per packed unit.
+ *
+ * How many units a box packs is a property of the PRODUCT, not of its type: a box
+ * of flash packs 1 ($4), a Biker 10-pack case packs 80 ($320), and an ordinary
+ * strip packs none at all. Anything left at 0 is never charged, which is the safe
+ * default for a product nobody has confirmed — daubers included.
+ *
+ * The rate belongs to the vendor, the unit count to the product, so only a vendor
+ * who actually charges packing can ever produce this line.
+ *
+ * It becomes a real PO line so the vendor sees it and the total matches their
+ * invoice — but kind 'fee' means it never creates an inventory box.
  */
 export function packingLine(vendor, lines) {
   const fee = Number(vendor?.packing_fee) || 0;
   if (fee <= 0) return null;
-  const types = String(vendor.packing_types || 'flash')
-    .split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
-  const boxes = lines
-    .filter((l) => l.kind !== 'fee' && types.includes(String(l._type || '').toLowerCase()))
-    .reduce((a, l) => a + l.qty, 0);
-  if (boxes <= 0) return null;
-  const label = types.length === 1 ? types[0] : 'items';
+  const units = lines
+    .filter((l) => l.kind !== 'fee')
+    .reduce((a, l) => a + l.qty * (Number(l._packUnits) || 0), 0);
+  if (units <= 0) return null;
   return {
-    product_id: null, kind: 'fee', qty: boxes, cost: round2(fee), price_tbd: false,
-    name_snapshot: `Packing — ${fmtMoney(fee)} per box of ${label}`,
+    product_id: null, kind: 'fee', qty: units, cost: round2(fee), price_tbd: false,
+    name_snapshot: `Packing — ${fmtMoney(fee)} per unit (${units} unit${units === 1 ? '' : 's'})`,
   };
 }

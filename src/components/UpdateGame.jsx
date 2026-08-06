@@ -2,7 +2,7 @@ import React, { useContext, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
 import { REAL_TYPES, isMisc, isGrabBag } from '../lib/logic/categories.js';
 import { needsCost, needsType, needsTickets, needsAnyUpdate } from '../lib/logic/setup.js';
-import { ticketPrice } from '../lib/logic/po.js';
+import { ticketPrice, fmtMoney } from '../lib/logic/po.js';
 import AskDistributor from './AskDistributor.jsx';
 
 /**
@@ -29,6 +29,7 @@ export default function UpdateGame({ product, onClose }) {
     tickets: product.tickets ?? '',
     price_per_ticket: String(ticketPrice(product)),
     active: product.active !== false,
+    packing_units: String(Number(product.packing_units) || 0),
   });
   const [saving, setSaving] = useState(false);
   const [asking, setAsking] = useState(false);
@@ -36,6 +37,8 @@ export default function UpdateGame({ product, onClose }) {
 
   const costWasSet = !needsCost(product);
   const vendorName = vendors.find((v) => v.id === product.vendor_id)?.name || '';
+  // only worth showing where the distributor actually charges packing
+  const packFee = Number(vendors.find((v) => v.id === f.vendor_id)?.packing_fee) || 0;
   // a mixed pack or a cherry case has no single ticket count to ask for
   const wantsTickets = f.type === 'flash' && !isMisc(product) && !isGrabBag(product);
 
@@ -69,6 +72,8 @@ export default function UpdateGame({ product, onClose }) {
       out.price_per_ticket = parseFloat(f.price_per_ticket) || 1;
     }
     if (admin && f.active !== (product.active !== false)) out.active = f.active;
+    const pu = Math.max(0, parseInt(f.packing_units) || 0);
+    if (admin && pu !== (Number(product.packing_units) || 0)) out.packing_units = pu;
     return out;
   };
 
@@ -159,6 +164,20 @@ export default function UpdateGame({ product, onClose }) {
               <option value="1">$1</option><option value="2">$2</option>
             </select></div>
         </div>
+
+        {admin && packFee > 0 && (
+          <div className="field"><label>Packing units per box</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <input className="num" type="number" min="0" value={f.packing_units}
+                onChange={(e) => set('packing_units', e.target.value)} style={{ width: 90 }} />
+              <span className="dimmer" style={{ fontSize: 11.5 }}>
+                {vendorName} charges {fmtMoney(packFee)} per unit — this box would add{' '}
+                <b>{fmtMoney(packFee * (parseInt(f.packing_units) || 0))}</b>. Flash is 1, a 10-pack case is 80,
+                an ordinary strip is 0.
+              </span>
+            </div>
+          </div>
+        )}
 
         {admin && (
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, cursor: 'pointer', marginTop: 2 }}>

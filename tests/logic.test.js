@@ -38,10 +38,10 @@ test('PO numbering increments per hall+vendor and pads', () => {
 });
 
 const products = [
-  { id: 'P1', vendor_id: 'bv', name: 'Big Fish', cost: 117.3, tickets: 1995, price_per_ticket: 1, type: 'flash' },
-  { id: 'P2', vendor_id: 'bv', name: 'Casino City', cost: 230.5, tickets: 1960, price_per_ticket: 2, type: 'flash' },
-  { id: 'P3', vendor_id: 'md', name: 'Moolah', cost: 120, tickets: 2400, price_per_ticket: 1, type: 'flash' },
-  { id: 'P4', vendor_id: 'md', name: 'Fat Kitty', cost: 89.1, tickets: null, price_per_ticket: 1, type: 'flash' },
+  { id: 'P1', vendor_id: 'bv', name: 'Big Fish', cost: 117.3, tickets: 1995, price_per_ticket: 1, type: 'flash', packing_units: 1 },
+  { id: 'P2', vendor_id: 'bv', name: 'Casino City', cost: 230.5, tickets: 1960, price_per_ticket: 2, type: 'flash', packing_units: 1 },
+  { id: 'P3', vendor_id: 'md', name: 'Moolah', cost: 120, tickets: 2400, price_per_ticket: 1, type: 'flash', packing_units: 1 },
+  { id: 'P4', vendor_id: 'md', name: 'Fat Kitty', cost: 89.1, tickets: null, price_per_ticket: 1, type: 'flash', packing_units: 1 },
 ];
 const vendors = [
   { id: 'bv', name: 'Bingo Vision', email: 'bv@x.com', contact_name: 'Scott', tax_rate: 0.0975 },
@@ -62,14 +62,46 @@ test('buildDrafts groups by vendor, skips zero qty, locks prices', () => {
 const bvFee = { id: 'bv', name: 'Bingo Vision', email: 'bv@x.com', contact_name: 'Scott', tax_rate: 0.0975, packing_fee: 4, packing_types: 'flash' };
 const vendorsFee = [bvFee, { id: 'md', name: 'Marathon', email: 'md@x.com', tax_rate: 0.0975 }];
 
-test('Bingo Vision flash order adds $4/box packing as a fee line', () => {
-  const [d] = buildDrafts({ P1: 2, P2: 3 }, products, vendorsFee);   // both bv flash
+test('Bingo Vision packs $4 per unit, and flash boxes hold one unit each', () => {
+  const [d] = buildDrafts({ P1: 2, P2: 3 }, products, vendorsFee);   // both bv flash, 1 unit each
   const fee = d.lines.find((l) => l.kind === 'fee');
   assert.ok(fee, 'packing line missing');
-  assert.equal(fee.qty, 5, 'one packing charge per box of flash');
+  assert.equal(fee.qty, 5, '5 boxes x 1 unit');
   assert.equal(fee.cost, 4);
   assert.equal(fee.product_id, null, 'fee lines are not products');
   assert.match(fee.name_snapshot, /Packing/);
+});
+
+test('a case that packs 80 units is charged 80 x $4', () => {
+  const cases = [{ id: 'C80', vendor_id: 'bv', name: '10-Pack of strips Biker', cost: 5120,
+                   type: 'strip', price_per_ticket: 1, packing_units: 80 }];
+  const [d] = buildDrafts({ C80: 1 }, cases, vendorsFee);
+  assert.equal(d.lines.find((l) => l.kind === 'fee').qty, 80);
+  assert.equal(d.subtotal, 5120 + 320);
+});
+
+test('an ordinary strip carries no packing even from the charging vendor', () => {
+  const plain = [{ id: 'S16', vendor_id: 'bv', name: 'Monopoly', cost: 64.6,
+                   type: 'strip', price_per_ticket: 1, packing_units: 0 }];
+  const [d] = buildDrafts({ S16: 3 }, plain, vendorsFee);
+  assert.ok(!d.lines.some((l) => l.kind === 'fee'), 'packing_units 0 means never charged');
+  assert.equal(d.subtotal, round2(64.6 * 3));
+});
+
+test('a mixed order charges only the units that carry packing', () => {
+  const mix = [
+    { id: 'F', vendor_id: 'bv', name: 'Pecker Heads', cost: 58.8, type: 'flash', price_per_ticket: 1, packing_units: 1 },
+    { id: 'S', vendor_id: 'bv', name: 'Monopoly', cost: 64.6, type: 'strip', price_per_ticket: 1, packing_units: 0 },
+    { id: 'C', vendor_id: 'bv', name: '10-Pack of strips', cost: 5120, type: 'strip', price_per_ticket: 1, packing_units: 80 },
+  ];
+  const [d] = buildDrafts({ F: 2, S: 4, C: 1 }, mix, vendorsFee);
+  assert.equal(d.lines.find((l) => l.kind === 'fee').qty, 82, '2 flash units + 80 case units, strips excluded');
+});
+
+test('packing never applies to a vendor that does not charge it', () => {
+  const other = [{ id: 'X', vendor_id: 'md', name: 'Anything', cost: 100, type: 'flash', price_per_ticket: 1, packing_units: 1 }];
+  const drafts = buildDrafts({ X: 5 }, other, vendorsFee);
+  assert.ok(!drafts[0].lines.some((l) => l.kind === 'fee'), 'only Bingo Vision charges packing');
 });
 
 test('packing is included in subtotal, tax and total', () => {
@@ -78,29 +110,11 @@ test('packing is included in subtotal, tax and total', () => {
   assert.equal(d.total, round2(242.60 * 1.0975));
 });
 
-test('other vendors get no packing charge', () => {
-  const drafts = buildDrafts({ P3: 4 }, products, vendorsFee);       // Marathon flash
-  assert.ok(!drafts[0].lines.some((l) => l.kind === 'fee'));
-});
-
-test('no packing when nothing of the charged type is ordered', () => {
-  const nonFlash = [{ id: 'S1', vendor_id: 'bv', name: 'Strip Pack', cost: 60, tickets: null, price_per_ticket: 1, type: 'strip' }];
-  const drafts = buildDrafts({ S1: 3 }, nonFlash, vendorsFee);
-  assert.ok(!drafts[0].lines.some((l) => l.kind === 'fee'), 'strips should not be charged packing');
-});
-
-test('packing counts only the charged types in a mixed order', () => {
-  const mixed = [
-    { id: 'F1', vendor_id: 'bv', name: 'Flash A', cost: 100, type: 'flash', price_per_ticket: 1 },
-    { id: 'S1', vendor_id: 'bv', name: 'Strip A', cost: 50, type: 'strip', price_per_ticket: 1 },
-  ];
-  const [d] = buildDrafts({ F1: 3, S1: 5 }, mixed, vendorsFee);
-  assert.equal(d.lines.find((l) => l.kind === 'fee').qty, 3, 'only flash boxes counted');
-});
-
 test('packingLine returns null for a vendor with no fee configured', () => {
-  assert.equal(packingLine({ packing_fee: 0 }, [{ qty: 2, _type: 'flash' }]), null);
-  assert.equal(packingLine({}, [{ qty: 2, _type: 'flash' }]), null);
+  assert.equal(packingLine({ packing_fee: 0 }, [{ qty: 2, _packUnits: 1 }]), null);
+  assert.equal(packingLine({}, [{ qty: 2, _packUnits: 1 }]), null);
+  assert.equal(packingLine({ packing_fee: 4 }, [{ qty: 2, _packUnits: 0 }]), null,
+    'a charging vendor still adds nothing when nothing packs');
 });
 
 test('lineName includes tickets/price only when known', () => {
