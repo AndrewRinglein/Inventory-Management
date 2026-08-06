@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { store, IS_DEMO, IS_SANDBOX } from './lib/store/index.js';
 import { roleFromUrl, roleLink, can as roleCan, ROLES } from './lib/roles.js';
 import { createScanCapture, resolveScan, beep } from './lib/logic/scan.js';
@@ -31,7 +31,9 @@ export default function App() {
   const [vendors, setVendors] = useState([]);
   const [products, setProducts] = useState([]);
   const [boxes, setBoxes] = useState([]);
-  const [pos, setPos] = useState([]);
+  const [allPos, setPos] = useState([]);
+  // archived orders drop out of every working view — Open Orders' Archive tab reads allPos
+  const pos = useMemo(() => allPos.filter((p) => !p.archived_at), [allPos]);
   const [payments, setPayments] = useState([]);
   const [orderQty, setOrderQtyState] = useState({});
   const [settings, setSettings] = useState({});
@@ -179,7 +181,7 @@ export default function App() {
   const ctx = {
     store, IS_DEMO, IS_SANDBOX, hall, setHall, screen, setScreen,
     role, roleLabel: ROLES[role].label, roleHome, can: canDo, readOnlyHall,
-    vendors, products, boxes, pos, payments, orderQty, settings,
+    vendors, products, boxes, pos, allPos, payments, orderQty, settings,
     reloadHall, reloadCatalog, reloadSettings,
     setToast, requirePin, scanMode, setScanMode, openSession, setOpenSession,
     receivingPo, setReceivingPo, productName, receivingScanRef,

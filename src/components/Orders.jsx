@@ -10,15 +10,18 @@ const STATUS = {
 };
 
 export default function Orders() {
-  const { hall, pos, boxes, vendors, store, reloadHall, setToast, setScreen, setReceivingPo, requirePin, can } = useContext(AppCtx);
+  const { hall, pos, allPos, boxes, vendors, store, reloadHall, setToast, setScreen, setReceivingPo, requirePin, can } = useContext(AppCtx);
   const [sel, setSel] = useState(null);
   const [lines, setLines] = useState([]);
   const [emails, setEmails] = useState([]);
   const [confirmDel, setConfirmDel] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [view, setView] = useState('active');   // active | archived
 
   const vmap = useMemo(() => Object.fromEntries(vendors.map((v) => [v.id, v])), [vendors]);
-  const sorted = [...pos].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+  const archived = (allPos || []).filter((p) => p.archived_at);
+  const shown = view === 'archived' ? archived : pos;
+  const sorted = [...shown].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
   const cur = sorted.find((p) => p.id === sel) || sorted[0];
 
   useEffect(() => {
@@ -49,6 +52,22 @@ export default function Orders() {
   // the store refuses too, this is just so the button explains itself first.
   const receivedOnCur = boxes.filter((b) => b.po_id === cur?.id && b.state !== 'on_order').length;
 
+  const toggleArchive = async () => {
+    if (busy || !cur) return;
+    setBusy(true);
+    try {
+      const nowArchived = !cur.archived_at;
+      await store.setPoArchived(cur.id, nowArchived);
+      await reloadHall();
+      setSel(null);
+      setToast(nowArchived
+        ? `${cur.num} archived — find it under Archived`
+        : `${cur.num} restored to the active list`);
+    } catch (e) {
+      setToast(e.message || 'Could not archive that order');
+    } finally { setBusy(false); }
+  };
+
   const doDelete = async () => {
     if (busy) return;
     if (!(await requirePin())) return;
@@ -67,6 +86,20 @@ export default function Orders() {
     <div>
       <div className="page-head">
         <div className="h1">Open Orders — {hall === 'sc' ? 'Santa Clara' : 'Redwood City'}</div>
+        <div className="hall-switch" style={{ margin: 0 }}>
+          <button className={view === 'active' ? 'on' : ''} onClick={() => { setView('active'); setSel(null); }}>
+            Active ({pos.length})
+          </button>
+          <button className={view === 'archived' ? 'on' : ''} onClick={() => { setView('archived'); setSel(null); }}>
+            Archived ({archived.length})
+          </button>
+        </div>
+        <div className="grow" />
+        <span className="dimmer" style={{ fontSize: 12 }}>
+          {view === 'archived'
+            ? 'Archived orders are hidden everywhere else — nothing about them was deleted.'
+            : 'Click an order to see its lines, receive it, archive it or delete it.'}
+        </span>
       </div>
       <div className="two-col" style={{ gridTemplateColumns: '420px 1fr' }}>
         <div className="card" style={{ overflow: 'hidden' }}>
@@ -84,13 +117,20 @@ export default function Orders() {
               ))}
             </tbody>
           </table>
-          {sorted.length === 0 && <div style={{ padding: 30, textAlign: 'center' }} className="dimmer">No purchase orders yet.</div>}
+          {sorted.length === 0 && (
+            <div style={{ padding: 30, textAlign: 'center' }} className="dimmer">
+              {view === 'archived' ? 'Nothing archived yet.' : 'No purchase orders yet.'}
+            </div>
+          )}
         </div>
         {cur && (
           <div className="card" style={{ overflow: 'hidden' }}>
             <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
               <b className="mono">{cur.num}</b>
               <span className={'badge ' + STATUS[cur.status][0]}>{STATUS[cur.status][1]}</span>
+              {cur.archived_at && (
+                <span className="badge b-gray" title={`Archived ${new Date(cur.archived_at).toLocaleDateString()}`}>archived</span>
+              )}
               <span className="dimmer" style={{ fontSize: 12 }}>
                 {vmap[cur.vendor_id]?.name} · sent {cur.sent_at ? new Date(cur.sent_at).toLocaleDateString() : '—'} · {lines.length} lines
               </span>
@@ -100,6 +140,14 @@ export default function Orders() {
               )}
               {can('receive') && cur.status === 'partial' && (
                 <button className="btn ghost sm" onClick={closeShort}>Close short</button>
+              )}
+              {can('order') && (
+                <button className="btn ghost sm" onClick={toggleArchive} disabled={busy}
+                  title={cur.archived_at
+                    ? 'Put this order back in the active list'
+                    : 'File it away — it keeps everything, but leaves the working views'}>
+                  {cur.archived_at ? '↩ Restore' : '🗄 Archive'}
+                </button>
               )}
               {can('order') && (
                 <button className="btn ghost sm" onClick={() => setConfirmDel(true)}

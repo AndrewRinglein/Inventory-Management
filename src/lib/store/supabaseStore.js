@@ -92,6 +92,17 @@ export class SupabaseStore {
   async getPoLines(poId) { return fetchAll(() => this.sb.from('po_lines').select('*').eq('po_id', poId)); }
   async setPoStatus(poId, status) { ok(await this.sb.from('purchase_orders').update({ status }).eq('id', poId)); }
 
+  /** Archive (or restore) a PO. Nothing is destroyed — it just leaves the working views. */
+  async setPoArchived(poId, archived) {
+    const po = ok(await this.sb.from('purchase_orders')
+      .update({ archived_at: archived ? new Date().toISOString() : null })
+      .eq('id', poId).select().single());
+    await this.logEvent(archived ? 'po.archive' : 'po.restore', 'purchase_orders', po.num, {
+      label: `${po.hall_id === 'sc' ? 'Santa Clara' : 'Redwood City'} — ${archived ? 'archived' : 'restored'} PO ${po.num}`,
+    });
+    return po;
+  }
+
   /**
    * Delete a purchase order outright — for one entered by mistake.
    *

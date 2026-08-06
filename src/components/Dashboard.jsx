@@ -20,7 +20,10 @@ export default function Dashboard() {
 
   const live = boxes.filter((b) => b.state === 'in_inventory' || b.state === 'opened');
   const liveVal = live.reduce((a, b) => a + (b.cost || 0), 0);
-  const inTransit = boxes.filter((b) => b.state === 'on_order').length;
+  // boxes on an archived order aren't really in transit any more — the order left
+  // the working views, so it shouldn't keep feeding the dashboard a number
+  const liveIds = new Set(pos.map((p) => p.id));
+  const inTransit = boxes.filter((b) => b.state === 'on_order' && (!b.po_id || liveIds.has(b.po_id))).length;
   const openPos = pos.filter((p) => p.status === 'sent' || p.status === 'partial');
   const openPay = payments.filter((p) => p.status === 'open');
 

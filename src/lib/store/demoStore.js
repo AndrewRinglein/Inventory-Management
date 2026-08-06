@@ -124,6 +124,17 @@ export class DemoStore {
     this._save();
   }
 
+  async setPoArchived(poId, archived) {
+    const po = this.db.purchase_orders.find((p) => p.id === poId);
+    if (!po) throw new Error('That order is gone');
+    po.archived_at = archived ? new Date().toISOString() : null;
+    this._event(archived ? 'po.archive' : 'po.restore', 'purchase_orders', po.num, {
+      label: `${po.hall_id === 'sc' ? 'Santa Clara' : 'Redwood City'} — ${archived ? 'archived' : 'restored'} PO ${po.num}`,
+    });
+    this._save();
+    return po;
+  }
+
   async deletePo(poId) {
     const po = this.db.purchase_orders.find((p) => p.id === poId);
     if (!po) throw new Error('That order is already gone');
