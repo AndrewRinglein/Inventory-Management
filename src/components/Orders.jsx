@@ -51,6 +51,10 @@ export default function Orders() {
   // an order that was entered by mistake. Anything already received blocks it —
   // the store refuses too, this is just so the button explains itself first.
   const receivedOnCur = boxes.filter((b) => b.po_id === cur?.id && b.state !== 'on_order').length;
+  const itemLines = lines.filter((l) => l.kind !== 'fee');
+  const orderedBoxes = itemLines.reduce((a, l) => a + l.qty, 0);
+  const tbdLines = itemLines.filter((l) => l.price_tbd).length;
+  const tbdBoxes = itemLines.filter((l) => l.price_tbd).reduce((a, l) => a + l.qty, 0);
 
   const toggleArchive = async () => {
     if (busy || !cur) return;
@@ -132,7 +136,9 @@ export default function Orders() {
                 <span className="badge b-gray" title={`Archived ${new Date(cur.archived_at).toLocaleDateString()}`}>archived</span>
               )}
               <span className="dimmer" style={{ fontSize: 12 }}>
-                {vmap[cur.vendor_id]?.name} · sent {cur.sent_at ? new Date(cur.sent_at).toLocaleDateString() : '—'} · {lines.length} lines
+                {vmap[cur.vendor_id]?.name} · sent {cur.sent_at ? new Date(cur.sent_at).toLocaleDateString() : '—'}
+                {' · '}{itemLines.length} item{itemLines.length === 1 ? '' : 's'}, {orderedBoxes} box{orderedBoxes === 1 ? '' : 'es'}
+                {tbdLines > 0 && <span style={{ color: 'var(--gold)' }}> · {tbdLines} awaiting price</span>}
               </span>
               <div style={{ flex: 1 }} />
               {can('receive') && (cur.status === 'sent' || cur.status === 'partial') && (
@@ -156,28 +162,45 @@ export default function Orders() {
               )}
             </div>
             <table className="tbl">
-              <thead><tr><th className="first">Item</th><th className="r">Qty</th><th className="r">Line total</th><th className="last">Received</th></tr></thead>
+              <thead><tr>
+                <th className="first">Item</th><th className="r">Qty</th>
+                <th className="r">Unit</th><th className="r">Line total</th><th className="last">Received</th>
+              </tr></thead>
               <tbody>
                 {lines.map((l) => {
                   const got = Math.min(recvCount[l.product_id] || 0, l.qty);
                   const full = got >= l.qty;
+                  const fee = l.kind === 'fee';
                   return (
                     <tr key={l.id}>
-                      <td className="first">{l.name_snapshot}</td>
+                      <td className="first">
+                        {l.name_snapshot}
+                        {l.price_tbd && <span className="badge b-gold" style={{ marginLeft: 6 }}
+                          title="Went out with a ? — the distributor sends their price and we reissue">awaiting price</span>}
+                      </td>
                       <td className="r mono">{l.qty}</td>
-                      <td className="r mono">{fmtMoney(l.qty * l.cost)}</td>
+                      <td className="r mono">{l.price_tbd ? <span className="tbd" style={{ cursor: 'default' }}>?</span> : fmtMoney(l.cost)}</td>
+                      <td className="r mono">{l.price_tbd ? <span className="tbd" style={{ cursor: 'default' }}>?</span> : fmtMoney(l.qty * l.cost)}</td>
                       <td className="last">
-                        <span className={'badge ' + (cur.status === 'sent' ? 'b-gold' : full ? 'b-green' : 'b-orange')}>
-                          {cur.status === 'sent' ? 'in transit' : full ? 'received' : `${got} of ${l.qty}`}
-                        </span>
+                        {fee
+                          ? <span className="dimmer" style={{ fontSize: 11 }}>charge, not stock</span>
+                          : <span className={'badge ' + (cur.status === 'sent' ? 'b-gold' : full ? 'b-green' : 'b-orange')}>
+                              {cur.status === 'sent' ? 'in transit' : full ? 'received' : `${got} of ${l.qty}`}
+                            </span>}
                       </td>
                     </tr>
                   );
                 })}
                 <tr>
                   <td className="first dim">Subtotal {fmtMoney(cur.subtotal)} · Tax {fmtMoney(cur.tax)}</td>
-                  <td colSpan={2} className="r mono"><b>{fmtMoney(cur.total)}</b></td><td className="last" />
+                  <td colSpan={3} className="r mono"><b>{fmtMoney(cur.total)}</b></td><td className="last" />
                 </tr>
+                {tbdLines > 0 && (
+                  <tr><td className="first" colSpan={5} style={{ fontSize: 11.5, color: 'var(--gold)' }}>
+                    {tbdLines} line{tbdLines === 1 ? '' : 's'} ({tbdBoxes} box{tbdBoxes === 1 ? '' : 'es'}) went out without a price.
+                    That total is what we know, not the final bill — the rest comes back on their invoice.
+                  </td></tr>
+                )}
               </tbody>
             </table>
             <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border)' }}>
