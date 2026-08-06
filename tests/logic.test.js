@@ -684,11 +684,49 @@ test('units in a box and units charged packing are different numbers', () => {
 
 test('the four parts read back as a set', () => {
   const p = priceParts({ base_cost: 64, pack_units: 80, packing_units: 80 }, BV);
-  assert.deepEqual(p, { base: 64, units: 80, box: 5120, packing: 320, allIn: 5440, multiplied: true });
+  assert.deepEqual(p, { base: 64, units: 80, box: 5120, packing: 320, allIn: 5440,
+                        split: 1, perBox: 5440, multiplied: true, splits: false },
+    'with no split set, the whole landed cost sits on the one box');
 });
 
 test('a vendor that charges no packing never adds any, whatever the units', () => {
   const p = priceParts({ base_cost: 100, pack_units: 8, packing_units: 8 }, { packing_fee: 0 });
   assert.equal(p.packing, 0);
   assert.equal(p.allIn, 800);
+});
+
+// ---- one ordered unit, several boxes on the shelf ----
+test('a case that arrives as 16 totes values each tote at a sixteenth', () => {
+  const biker = { base_cost: 64, pack_units: 80, packing_units: 80, split_boxes: 16 };
+  const p = priceParts(biker, BV);
+  assert.equal(p.box, 5120, 'the vendor invoices the case');
+  assert.equal(p.packing, 320);
+  assert.equal(p.allIn, 5440, 'landed cost of the case');
+  assert.equal(p.split, 16);
+  assert.equal(p.perBox, 340, 'and each tote on the shelf is worth a sixteenth of that');
+});
+
+test('almost everything is one box per ordered unit, so nothing changes', () => {
+  const flash = { base_cost: 58.8, pack_units: 1, packing_units: 1 };
+  const p = priceParts(flash, BV);
+  assert.equal(p.split, 1);
+  assert.equal(p.splits, false);
+  assert.equal(p.perBox, p.allIn, 'buy a box, shelf a box');
+  assert.equal(p.perBox, 62.8);
+});
+
+test('ordering a splitting product creates one box per tote, not per case', () => {
+  const V = [{ id: 'bv', name: 'Bingo Vision', tax_rate: 0.0975, packing_fee: 4 }];
+  const P = [{ id: 'B', vendor_id: 'bv', name: '10-Pack of strips Biker', type: 'strip',
+               base_cost: 64, pack_units: 80, packing_units: 80, split_boxes: 16,
+               price_per_ticket: 1, cost: 5120 }];
+  const [d] = buildDrafts({ B: 2 }, P, V);
+  const line = d.lines.find((l) => l.kind !== 'fee');
+  assert.equal(line.qty, 2, 'the PO orders 2 cases');
+  assert.equal(line.cost, 5120, 'at the case price');
+  assert.equal(line.split_boxes, 16);
+  assert.equal(line.per_box_cost, 340);
+  assert.equal(line.qty * line.split_boxes, 32, 'which will become 32 totes in inventory');
+  assert.equal(round2(line.qty * line.split_boxes * line.per_box_cost), 10880,
+    'and the shelf value equals what the order landed at');
 });

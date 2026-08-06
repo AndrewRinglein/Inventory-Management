@@ -1,5 +1,7 @@
 // Purchase-order math and numbering. Pure functions — unit tested in tests/logic.test.js.
 
+import { perBoxValue } from './pricing.js';
+
 export const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 // Postgres numeric columns arrive over the wire as STRINGS ("64.60"), so every
@@ -70,6 +72,9 @@ export function buildDrafts(qty, products, vendors) {
       cost: Number(p.cost) > 0 ? p.cost : 0,
       price_tbd: !(Number(p.cost) > 0),   // ordered before we knew the price
       kind: 'item', _packUnits: Number(p.packing_units) || 0,
+      // one ordered unit can arrive as several inventory boxes, each worth a share
+      split_boxes: Math.max(1, parseInt(p.split_boxes) || 1),
+      per_box_cost: perBoxValue(p, vmap[p.vendor_id]),
     });
   }
   return Object.entries(byVendor).map(([vendorId, rawLines]) => {

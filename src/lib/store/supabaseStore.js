@@ -76,12 +76,16 @@ export class SupabaseStore {
         price_tbd_lines: d.lines.filter((l) => l.price_tbd).length,
         sent_at: new Date().toISOString(),
       }).select().single());
-      ok(await this.sb.from('po_lines').insert(d.lines.map((l) => ({ po_id: po.id, ...l }))));
-      // fee lines (packing charges) are not physical goods — no boxes for them
+      // split_boxes / per_box_cost are how the boxes get built, not part of the PO record
+      ok(await this.sb.from('po_lines').insert(
+        d.lines.map(({ split_boxes, per_box_cost, ...l }) => ({ po_id: po.id, ...l }))));
+      // fee lines (packing charges) are not physical goods — no boxes for them.
+      // One ordered unit can become several inventory boxes (a case of totes), each
+      // carrying its share of the landed cost.
       const boxes = d.lines.filter((l) => l.kind !== 'fee' && l.product_id).flatMap((l) =>
-        Array.from({ length: l.qty }, () => ({
+        Array.from({ length: l.qty * (l.split_boxes || 1) }, () => ({
           hall_id: hallId, product_id: l.product_id, po_id: po.id,
-          cost: l.cost, price_tbd: !!l.price_tbd, state: 'on_order',
+          cost: l.per_box_cost ?? l.cost, price_tbd: !!l.price_tbd, state: 'on_order',
         })));
       if (boxes.length) ok(await this.sb.from('boxes').insert(boxes));
       created.push(po);

@@ -28,15 +28,35 @@ export const packingFor = (p, vendor) =>
 /** Box cost plus its packing — what a box actually costs to have on the shelf. */
 export const allInCost = (p, vendor) => round2(boxCost(p) + packingFor(p, vendor));
 
+/**
+ * How many inventory boxes one ordered unit becomes.
+ *
+ * Usually 1 — you buy a box, you shelve a box. But a Biker 10-pack case is bought
+ * as one line and arrives as 16 totes, and it's the tote that gets counted, opened
+ * and sold from. Always at least 1.
+ */
+export const splitBoxes = (p) => Math.max(1, parseInt(p?.split_boxes) || 1);
+
+/**
+ * What ONE INVENTORY BOX is worth — the landed cost of the ordered unit spread
+ * across the boxes it becomes. This is the number inventory is valued at; boxCost
+ * is what the vendor invoices. Confusing the two overstated a hall by $174k.
+ */
+export const perBoxValue = (p, vendor) => round2(allInCost(p, vendor) / splitBoxes(p));
+
 /** The four parts, ready to print. */
 export function priceParts(p, vendor) {
   const units = packUnits(p);
+  const split = splitBoxes(p);
   return {
     base: baseCost(p),
     units,
     box: boxCost(p),
     packing: packingFor(p, vendor),
     allIn: allInCost(p, vendor),
+    split,
+    perBox: perBoxValue(p, vendor),
     multiplied: units > 1,
+    splits: split > 1,
   };
 }

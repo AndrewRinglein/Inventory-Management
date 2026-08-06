@@ -6,7 +6,7 @@ import { countByProduct } from '../lib/logic/boxes.js';
 import { SESSIONS } from '../lib/sessions.js';
 import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.js';
 import { needsCost, needsType, needsTickets, needsVendor } from '../lib/logic/setup.js';
-import { priceParts } from '../lib/logic/pricing.js';
+import { priceParts, perBoxValue } from '../lib/logic/pricing.js';
 import UpdateGame from './UpdateGame.jsx';
 
 const COLS = [
@@ -58,7 +58,9 @@ export default function Inventory() {
         }
       }
       const held = (c.inv || 0) + (c.open || 0);
-      const value = held * (Number(p.cost) || 0);
+      // value what's ON THE SHELF: a case that splits into 16 totes is worth
+      // 1/16 per tote, not the case price per tote
+      const value = held * perBoxValue(p, vmap[p.vendor_id]);
       totVal += value;
       if (needsCost(p)) unvalued += held;   // counted, but we can't put a number on it yet
       out.push({
@@ -207,9 +209,14 @@ export default function Inventory() {
                 <td className="r mono">
                   {needsCost(r.p) ? <Upd p={r.p} /> : (() => {
                     const pp = priceParts(r.p, vmap[r.p.vendor_id]);
-                    return <span title={`${fmtMoney(pp.base)} per unit × ${pp.units}`}>
-                      {fmtMoney(pp.box)}
-                      {pp.multiplied && <div className="dimmer" style={{ fontSize: 10.5 }}>{fmtMoney(pp.base)} ×{pp.units}</div>}
+                    return <span title={`${fmtMoney(pp.base)} per unit × ${pp.units} = ${fmtMoney(pp.box)} per ordered unit`
+                      + (pp.splits ? `, arriving as ${pp.split} boxes at ${fmtMoney(pp.perBox)} each` : '')}>
+                      {fmtMoney(pp.perBox)}
+                      {(pp.multiplied || pp.splits) && (
+                        <div className="dimmer" style={{ fontSize: 10.5 }}>
+                          {pp.splits ? `${fmtMoney(pp.allIn)} ÷ ${pp.split}` : `${fmtMoney(pp.base)} ×${pp.units}`}
+                        </div>
+                      )}
                     </span>;
                   })()}
                 </td>

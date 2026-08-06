@@ -98,12 +98,13 @@ export class DemoStore {
       };
       this.db.purchase_orders.push(po);
       for (const l of d.lines) {
-        this.db.po_lines.push({ id: uid(), po_id: po.id, ...l });
+        const { split_boxes, per_box_cost, ...rec } = l;
+        this.db.po_lines.push({ id: uid(), po_id: po.id, ...rec });
         if (l.kind === 'fee' || !l.product_id) continue;   // packing charge: no boxes
-        for (let i = 0; i < l.qty; i++) {
+        for (let i = 0; i < l.qty * (split_boxes || 1); i++) {
           this.db.boxes.push({
             id: uid(), hall_id: hallId, product_id: l.product_id, po_id: po.id,
-            shipment_id: null, serial: '', cost: l.cost, price_tbd: !!l.price_tbd, state: 'on_order',
+            shipment_id: null, serial: '', cost: per_box_cost ?? l.cost, price_tbd: !!l.price_tbd, state: 'on_order',
             session_tag: null, ordered_at: new Date().toISOString(),
             received_at: null, opened_at: null, sold_out_at: null,
           });

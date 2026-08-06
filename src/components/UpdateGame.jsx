@@ -3,7 +3,7 @@ import { AppCtx } from '../App.jsx';
 import { REAL_TYPES, isMisc, isGrabBag } from '../lib/logic/categories.js';
 import { needsCost, needsType, needsTickets, needsAnyUpdate } from '../lib/logic/setup.js';
 import { ticketPrice, fmtMoney } from '../lib/logic/po.js';
-import { priceParts, baseCost, packUnits } from '../lib/logic/pricing.js';
+import { priceParts, baseCost, packUnits, splitBoxes } from '../lib/logic/pricing.js';
 import AskDistributor from './AskDistributor.jsx';
 
 /**
@@ -28,6 +28,7 @@ export default function UpdateGame({ product, onClose }) {
     type: product.type || '',
     cost: needsCost(product) ? '' : String(baseCost(product)),
     pack_units: String(packUnits(product)),
+    split_boxes: String(splitBoxes(product)),
     tickets: product.tickets ?? '',
     price_per_ticket: String(ticketPrice(product)),
     active: product.active !== false,
@@ -68,6 +69,8 @@ export default function UpdateGame({ product, onClose }) {
     if (c > 0 && Math.round(c * 100) / 100 !== baseCost(product)) out.base_cost = Math.round(c * 100) / 100;
     const u = Math.max(1, parseInt(f.pack_units) || 1);
     if (admin && u !== packUnits(product)) out.pack_units = u;
+    const sb = Math.max(1, parseInt(f.split_boxes) || 1);
+    if (admin && sb !== splitBoxes(product)) out.split_boxes = sb;
     if (wantsTickets) {
       const t = f.tickets === '' ? null : Math.max(0, parseInt(f.tickets) || 0);
       if (t !== (product.tickets ?? null)) out.tickets = t;
@@ -157,9 +160,15 @@ export default function UpdateGame({ product, onClose }) {
             {costWasSet && <div className="dimmer" style={{ fontSize: 11, marginTop: 3 }}>Changing this asks for the PIN</div>}
           </div>
           {admin && (
-            <div className="field" style={{ width: 96 }}><label>Units / box</label>
+            <div className="field" style={{ width: 92 }}><label>Units / box</label>
               <input className="num" type="number" min="1" value={f.pack_units}
                 onChange={(e) => set('pack_units', e.target.value)} style={{ width: '100%', fontSize: 16 }} /></div>
+          )}
+          {admin && (
+            <div className="field" style={{ width: 108 }}><label>Boxes per order</label>
+              <input className="num" type="number" min="1" value={f.split_boxes}
+                title="One ordered unit arrives as this many boxes on the shelf. 1 for almost everything."
+                onChange={(e) => set('split_boxes', e.target.value)} style={{ width: '100%', fontSize: 16 }} /></div>
           )}
           {wantsTickets && (
             <div className="field" style={{ flex: 1 }}><label>Tickets per box</label>
@@ -203,8 +212,13 @@ export default function UpdateGame({ product, onClose }) {
               <div className="mono" style={{ fontSize: 13 }}>
                 {fmtMoney(pp.base)} × {pp.units} = <b>{fmtMoney(pp.box)}</b> per box
                 {pp.packing > 0 && <> + {fmtMoney(pp.packing)} packing = <b>{fmtMoney(pp.allIn)}</b></>}
+                {pp.splits && <div style={{ marginTop: 3 }}>
+                  arrives as <b>{pp.split} boxes</b> at <b>{fmtMoney(pp.perBox)}</b> each
+                </div>}
               </div>
-              <div className="dimmer" style={{ fontSize: 11 }}>base cost × units per box, then packing on top</div>
+              <div className="dimmer" style={{ fontSize: 11 }}>
+                base cost × units per box, then packing on top{pp.splits ? ', split across the boxes it becomes' : ''}
+              </div>
             </div>
           );
         })()}
