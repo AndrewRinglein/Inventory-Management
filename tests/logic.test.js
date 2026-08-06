@@ -8,6 +8,7 @@ import { buildOrderEmails, buildDeliveredEmail, buildShortageEmail, senderFor } 
 import { isMisc, passesFilters } from '../src/lib/logic/categories.js';
 import { needsSetup, needsCost, needsType, needsTickets, needsAnyUpdate, needsVendor, UNKNOWN_VENDOR, productsNeedingSetup } from '../src/lib/logic/setup.js';
 import { isGrabBag } from '../src/lib/logic/categories.js';
+import { priceParts, boxCost, baseCost, packUnits, packingFor } from '../src/lib/logic/pricing.js';
 
 // ---------- PO math ----------
 test('poTotals matches spreadsheet math (9.75% tax)', () => {
@@ -650,4 +651,44 @@ test('an unknown-distributor game cannot reach a purchase order', () => {
   assert.equal(drafts[0].vendor_id, 'bv');
   assert.ok(!drafts[0].lines.some((l) => l.product_id === 'B'),
     'and it must not be smuggled onto someone else’s order either');
+});
+
+// ---- base cost x units per box, with packing separate ----
+const BV = { id: 'bv', packing_fee: 4 };
+
+test('a box costs the base price times the units inside it', () => {
+  assert.equal(boxCost({ base_cost: 64.6, pack_units: 16 }), 1033.60, 'Monopoly: $64.60 x 16');
+  assert.equal(boxCost({ base_cost: 64.6, pack_units: 8 }), 516.80, 'an ordinary strip: x8');
+  assert.equal(boxCost({ base_cost: 64, pack_units: 80 }), 5120, 'a Biker case: $64 x 80');
+  assert.equal(boxCost({ base_cost: 58.8, pack_units: 1 }), 58.80, 'a box of flash is one unit');
+});
+
+test('a product not yet split into parts still prices correctly', () => {
+  assert.equal(baseCost({ cost: 117.3 }), 117.3, 'fall back to the box cost');
+  assert.equal(packUnits({}), 1, 'never zero, or the maths collapses');
+  assert.equal(packUnits({ pack_units: 0 }), 1);
+  assert.equal(boxCost({ cost: 117.3 }), 117.3);
+});
+
+test('units in a box and units charged packing are different numbers', () => {
+  const monopoly = { base_cost: 64.6, pack_units: 16, packing_units: 0 };
+  assert.equal(packUnits(monopoly), 16, 'sixteen in the box');
+  assert.equal(packingFor(monopoly, BV), 0, 'and none of them charged packing');
+
+  const biker = { base_cost: 64, pack_units: 80, packing_units: 80 };
+  assert.equal(packingFor(biker, BV), 320);
+
+  const flash = { base_cost: 58.8, pack_units: 1, packing_units: 1 };
+  assert.equal(packingFor(flash, BV), 4);
+});
+
+test('the four parts read back as a set', () => {
+  const p = priceParts({ base_cost: 64, pack_units: 80, packing_units: 80 }, BV);
+  assert.deepEqual(p, { base: 64, units: 80, box: 5120, packing: 320, allIn: 5440, multiplied: true });
+});
+
+test('a vendor that charges no packing never adds any, whatever the units', () => {
+  const p = priceParts({ base_cost: 100, pack_units: 8, packing_units: 8 }, { packing_fee: 0 });
+  assert.equal(p.packing, 0);
+  assert.equal(p.allIn, 800);
 });

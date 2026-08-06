@@ -3,6 +3,7 @@ import { AppCtx } from '../App.jsx';
 import { REAL_TYPES, isMisc, isGrabBag } from '../lib/logic/categories.js';
 import { needsCost, needsType, needsTickets, needsAnyUpdate } from '../lib/logic/setup.js';
 import { ticketPrice, fmtMoney } from '../lib/logic/po.js';
+import { priceParts, baseCost, packUnits } from '../lib/logic/pricing.js';
 import AskDistributor from './AskDistributor.jsx';
 
 /**
@@ -25,7 +26,8 @@ export default function UpdateGame({ product, onClose }) {
     name: product.name || '',
     vendor_id: product.vendor_id || '',
     type: product.type || '',
-    cost: needsCost(product) ? '' : String(product.cost),
+    cost: needsCost(product) ? '' : String(baseCost(product)),
+    pack_units: String(packUnits(product)),
     tickets: product.tickets ?? '',
     price_per_ticket: String(ticketPrice(product)),
     active: product.active !== false,
@@ -63,7 +65,9 @@ export default function UpdateGame({ product, onClose }) {
     if (admin && f.vendor_id !== product.vendor_id) out.vendor_id = f.vendor_id;
     if (f.type !== (product.type || '')) out.type = f.type || null;
     const c = parseFloat(f.cost);
-    if (c > 0 && Math.round(c * 100) / 100 !== Number(product.cost)) out.cost = Math.round(c * 100) / 100;
+    if (c > 0 && Math.round(c * 100) / 100 !== baseCost(product)) out.base_cost = Math.round(c * 100) / 100;
+    const u = Math.max(1, parseInt(f.pack_units) || 1);
+    if (admin && u !== packUnits(product)) out.pack_units = u;
     if (wantsTickets) {
       const t = f.tickets === '' ? null : Math.max(0, parseInt(f.tickets) || 0);
       if (t !== (product.tickets ?? null)) out.tickets = t;
@@ -145,13 +149,18 @@ export default function UpdateGame({ product, onClose }) {
         </div>
 
         <div style={{ display: 'flex', gap: 12 }}>
-          <div className="field" style={{ flex: 1 }}><label>Unit cost $</label>
+          <div className="field" style={{ flex: 1 }}><label>Base cost $ (one unit)</label>
             <input className="num" type="number" min="0" step="0.01" value={f.cost} placeholder="0.00"
               autoFocus={needsCost(product) && !needsType(product)}
               onChange={(e) => set('cost', e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && save()} style={{ width: '100%', fontSize: 16 }} />
             {costWasSet && <div className="dimmer" style={{ fontSize: 11, marginTop: 3 }}>Changing this asks for the PIN</div>}
           </div>
+          {admin && (
+            <div className="field" style={{ width: 96 }}><label>Units / box</label>
+              <input className="num" type="number" min="1" value={f.pack_units}
+                onChange={(e) => set('pack_units', e.target.value)} style={{ width: '100%', fontSize: 16 }} /></div>
+          )}
           {wantsTickets && (
             <div className="field" style={{ flex: 1 }}><label>Tickets per box</label>
               <input className="num" type="number" min="0" value={f.tickets} placeholder="e.g. 1440"
@@ -185,6 +194,20 @@ export default function UpdateGame({ product, onClose }) {
             In use — untick to retire it from ordering. Stock already on the shelf still counts.
           </label>
         )}
+
+        {(parseFloat(f.cost) > 0) && (() => {
+          const pp = priceParts({ ...product, base_cost: parseFloat(f.cost) || 0, pack_units: parseInt(f.pack_units) || 1,
+                                  packing_units: parseInt(f.packing_units) || 0 }, vendors.find((v) => v.id === f.vendor_id));
+          return (
+            <div className="card pad" style={{ marginTop: 4, marginBottom: 4, background: 'var(--bg)' }}>
+              <div className="mono" style={{ fontSize: 13 }}>
+                {fmtMoney(pp.base)} × {pp.units} = <b>{fmtMoney(pp.box)}</b> per box
+                {pp.packing > 0 && <> + {fmtMoney(pp.packing)} packing = <b>{fmtMoney(pp.allIn)}</b></>}
+              </div>
+              <div className="dimmer" style={{ fontSize: 11 }}>base cost × units per box, then packing on top</div>
+            </div>
+          );
+        })()}
 
         <div style={{ marginTop: 10, fontSize: 12 }}>
           {stillMissing.length

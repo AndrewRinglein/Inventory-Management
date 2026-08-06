@@ -4,6 +4,7 @@ import { fmtMoney, buildDrafts, ticketPrice } from '../lib/logic/po.js';
 import { countByProduct } from '../lib/logic/boxes.js';
 import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.js';
 import { needsCost, needsType, needsTickets, needsVendor } from '../lib/logic/setup.js';
+import { priceParts } from '../lib/logic/pricing.js';
 import UpdateGame from './UpdateGame.jsx';
 
 const TIX_FILTERS = [
@@ -194,7 +195,20 @@ export default function Purchase() {
                     {needsCost(p)
                       ? <button className="tbd" title="No price on our side — the PO goes out with a ? and the vendor fills it in. Click to enter it now."
                           onClick={() => setUpdPid(p.id)}>?</button>
-                      : fmtMoney(p.cost)}
+                      : (() => {
+                          const pp = priceParts(p, vmap[p.vendor_id]);
+                          return (
+                            <span title={`${fmtMoney(pp.base)} per unit × ${pp.units}${pp.packing ? ` + ${fmtMoney(pp.packing)} packing` : ''}`}>
+                              {fmtMoney(pp.box)}
+                              {(pp.multiplied || pp.packing > 0) && (
+                                <div className="dimmer" style={{ fontSize: 10.5 }}>
+                                  {pp.multiplied && `${fmtMoney(pp.base)} ×${pp.units}`}
+                                  {pp.packing > 0 && ` +${fmtMoney(pp.packing)} pk`}
+                                </div>
+                              )}
+                            </span>
+                          );
+                        })()}
                   </td>
                   <td className="r mono">{(c.inv || 0) + (c.open || 0)}</td>
                   <td className="r mono dimmer">{c.onorder || 0}</td>

@@ -6,6 +6,7 @@ import { countByProduct } from '../lib/logic/boxes.js';
 import { SESSIONS } from '../lib/sessions.js';
 import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.js';
 import { needsCost, needsType, needsTickets, needsVendor } from '../lib/logic/setup.js';
+import { priceParts } from '../lib/logic/pricing.js';
 import UpdateGame from './UpdateGame.jsx';
 
 const COLS = [
@@ -203,7 +204,15 @@ export default function Inventory() {
                 <td className="dimmer" style={{ fontSize: 12 }}>{needsType(r.p) ? <Upd p={r.p} /> : r.p.type}</td>
                 <td className="r mono">{needsTickets(r.p) ? <Upd p={r.p} /> : (r.p.tickets ? r.p.tickets.toLocaleString() : '—')}</td>
                 <td className="r mono dim">${ticketPrice(r.p)}</td>
-                <td className="r mono">{needsCost(r.p) ? <Upd p={r.p} /> : fmtMoney(r.p.cost)}</td>
+                <td className="r mono">
+                  {needsCost(r.p) ? <Upd p={r.p} /> : (() => {
+                    const pp = priceParts(r.p, vmap[r.p.vendor_id]);
+                    return <span title={`${fmtMoney(pp.base)} per unit × ${pp.units}`}>
+                      {fmtMoney(pp.box)}
+                      {pp.multiplied && <div className="dimmer" style={{ fontSize: 10.5 }}>{fmtMoney(pp.base)} ×{pp.units}</div>}
+                    </span>;
+                  })()}
+                </td>
                 <td className="r mono">
                   {adjustMode
                     ? <button className="btn ghost sm" style={{ fontFamily: 'inherit', minWidth: 46 }}

@@ -2,7 +2,8 @@ import React, { useContext, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
 import { needsCost, needsType, needsTickets, needsAnyUpdate, productsNeedingUpdate } from '../lib/logic/setup.js';
 import { REAL_TYPES } from '../lib/logic/categories.js';
-import { ticketPrice } from '../lib/logic/po.js';
+import { ticketPrice, fmtMoney } from '../lib/logic/po.js';
+import { priceParts } from '../lib/logic/pricing.js';
 import AskDistributor from './AskDistributor.jsx';
 import UpdateGame from './UpdateGame.jsx';
 
@@ -48,6 +49,8 @@ export default function Games() {
     }
     if (field === 'price_per_ticket') { if (!(await requirePin())) return; v = parseFloat(v) || 1; }
     if (field === 'tickets') v = v === '' ? null : Math.max(0, parseInt(v) || 0);
+    if (field === 'base_cost') { if (!(await requirePin())) return; v = Math.round((parseFloat(v) || 0) * 100) / 100; }
+    if (field === 'pack_units') { if (!(await requirePin())) return; v = Math.max(1, parseInt(v) || 1); }
     if (field === 'name' && !String(v).trim()) { setToast('Name cannot be empty'); return; }
     await store.updateProduct(p.id, { [field]: v });
     await reloadCatalog();
@@ -154,7 +157,10 @@ export default function Games() {
             <th style={{ width: 56 }}>ID</th>
             {showOrig && <th style={{ width: 210 }}>Orig name</th>}
             <th style={{ width: 100 }}>Type</th>
-            <th style={{ width: 100 }}>Unit cost $</th>
+            <th style={{ width: 96 }}>Base $</th>
+            <th style={{ width: 52 }} title="Units per box">×</th>
+            <th className="r" style={{ width: 92 }} title="Packing charged on this box">Packing</th>
+            <th className="r" style={{ width: 104 }}>Box cost</th>
             <th style={{ width: 82 }}>
               <div>$ / ticket</div>
               <select value={priceF} onChange={(e) => setPriceF(e.target.value)} style={{ fontWeight: 400, marginTop: 3, width: '100%' }}>
@@ -195,10 +201,24 @@ export default function Games() {
                 </td>
                 <td>
                   <input className={'cell num' + (needsCost(p) ? ' needs-update' : '')} type="number" min="0" step="0.01"
-                    placeholder={needsCost(p) ? 'update' : ''} title={needsCost(p) ? 'No unit cost — cannot be ordered or received' : ''}
-                    disabled={!editable} defaultValue={needsCost(p) ? '' : p.cost} key={p.id + '_c' + p.cost}
-                    onBlur={(e) => String(p.cost) !== e.target.value && edit(p, 'cost', e.target.value)} style={{ width: 84 }} />
+                    placeholder={needsCost(p) ? 'update' : ''} title={needsCost(p) ? 'No cost yet — the PO prints ? and asks' : 'What one unit costs'}
+                    disabled={!editable} defaultValue={needsCost(p) ? '' : priceParts(p, vmap[p.vendor_id]).base}
+                    key={p.id + '_b' + p.base_cost}
+                    onBlur={(e) => String(priceParts(p, vmap[p.vendor_id]).base) !== e.target.value && edit(p, 'base_cost', e.target.value)}
+                    style={{ width: 80 }} />
                 </td>
+                <td>
+                  <input className="cell num" type="number" min="1" disabled={!editable}
+                    title="Units per box — the base cost is multiplied by this"
+                    defaultValue={priceParts(p, vmap[p.vendor_id]).units} key={p.id + '_u' + p.pack_units}
+                    onBlur={(e) => String(priceParts(p, vmap[p.vendor_id]).units) !== e.target.value && edit(p, 'pack_units', e.target.value)}
+                    style={{ width: 46 }} />
+                </td>
+                <td className="r mono dimmer" style={{ fontSize: 11.5 }}>
+                  {priceParts(p, vmap[p.vendor_id]).packing > 0
+                    ? fmtMoney(priceParts(p, vmap[p.vendor_id]).packing) : '—'}
+                </td>
+                <td className="r mono"><b>{needsCost(p) ? '—' : fmtMoney(priceParts(p, vmap[p.vendor_id]).box)}</b></td>
                 <td>
                   <select value={String(ticketPrice(p))} disabled={!editable} onChange={(e) => edit(p, 'price_per_ticket', e.target.value)}
                     style={{ fontSize: 12, padding: '3px 4px', width: '100%' }} className="mono">
