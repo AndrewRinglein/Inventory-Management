@@ -3,7 +3,7 @@ import { AppCtx } from '../App.jsx';
 import { fmtMoney, buildDrafts, ticketPrice } from '../lib/logic/po.js';
 import { countByProduct } from '../lib/logic/boxes.js';
 import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.js';
-import { needsCost, needsType, needsTickets } from '../lib/logic/setup.js';
+import { needsCost, needsType, needsTickets, needsVendor } from '../lib/logic/setup.js';
 import UpdateGame from './UpdateGame.jsx';
 
 const TIX_FILTERS = [
@@ -186,7 +186,9 @@ export default function Purchase() {
                   <td className="first">{p.name}</td>
                   <td className="r mono">{needsTickets(p) ? <Upd p={p} /> : (p.tickets ? p.tickets.toLocaleString() : '—')}</td>
                   <td className="r mono dim">${ticketPrice(p)}</td>
-                  <td className="dim" style={{ fontSize: 12 }}>{vmap[p.vendor_id]?.name}</td>
+                  <td className="dim" style={{ fontSize: 12 }}>
+                    {needsVendor(p) ? <Upd p={p} /> : vmap[p.vendor_id]?.name}
+                  </td>
                   <td className="dimmer" style={{ fontSize: 12 }}>{needsType(p) ? <Upd p={p} /> : p.type}</td>
                   <td className="r mono">
                     {needsCost(p)
@@ -197,9 +199,13 @@ export default function Purchase() {
                   <td className="r mono">{(c.inv || 0) + (c.open || 0)}</td>
                   <td className="r mono dimmer">{c.onorder || 0}</td>
                   <td style={{ textAlign: 'center' }}>
-                    <input className={'qty' + (needsCost(p) ? ' tbd-qty' : '')} type="number" min="0" value={n || ''} placeholder="" disabled={!editable}
-                      title={needsCost(p) ? "You can order this — the PO will show ? and ask the vendor for their price" : ''}
-                      onChange={(e) => setQty(p.id, e.target.value)} />
+                    {needsVendor(p)
+                      ? <button className="badge b-gold" style={{ border: 0, cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: 600 }}
+                          title="We don't know who supplies this yet, so there's nobody to send the order to. Click to set the distributor."
+                          onClick={() => setUpdPid(p.id)}>needs distributor</button>
+                      : <input className={'qty' + (needsCost(p) ? ' tbd-qty' : '')} type="number" min="0" value={n || ''} placeholder="" disabled={!editable}
+                          title={needsCost(p) ? "You can order this — the PO will show ? and ask the vendor for their price" : ''}
+                          onChange={(e) => setQty(p.id, e.target.value)} />}
                   </td>
                   <td className="r mono last">{n ? (needsCost(p) ? <span className="tbd">?</span> : fmtMoney(n * p.cost)) : ''}</td>
                 </tr>

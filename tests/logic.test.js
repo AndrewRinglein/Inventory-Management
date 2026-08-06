@@ -6,7 +6,7 @@ import { canTransition, transition, countByProduct } from '../src/lib/logic/boxe
 import { resolveScan } from '../src/lib/logic/scan.js';
 import { buildOrderEmails, buildDeliveredEmail, buildShortageEmail, senderFor } from '../src/lib/logic/emails.js';
 import { isMisc, passesFilters } from '../src/lib/logic/categories.js';
-import { needsSetup, needsCost, needsType, needsTickets, needsAnyUpdate, productsNeedingSetup } from '../src/lib/logic/setup.js';
+import { needsSetup, needsCost, needsType, needsTickets, needsAnyUpdate, needsVendor, UNKNOWN_VENDOR, productsNeedingSetup } from '../src/lib/logic/setup.js';
 import { isGrabBag } from '../src/lib/logic/categories.js';
 
 // ---------- PO math ----------
@@ -212,18 +212,27 @@ test('two vendors -> two PO emails, still no accounting copies', () => {
 
 // ---------- items imported without a price ----------
 test('an item with no cost is not ready to order or receive', () => {
-  assert.equal(needsSetup({ name: 'Cowgirls', cost: 0 }), true);
-  assert.equal(needsSetup({ name: 'Cowgirls', cost: '0.00' }), true);
-  assert.equal(needsSetup({ name: 'Cowgirls' }), true);
-  assert.equal(needsSetup({ name: 'BIG FISH', cost: 117.3 }), false);
-  assert.equal(needsSetup({ name: 'BIG FISH', cost: '117.30' }), false, 'costs arrive as strings from the API');
+  // needsCost is about money; needsSetup is about whether an order can be addressed
+  assert.equal(needsCost({ name: 'Cowgirls', cost: 0 }), true);
+  assert.equal(needsCost({ name: 'Cowgirls', cost: '0.00' }), true);
+  assert.equal(needsCost({ name: 'Cowgirls' }), true);
+  assert.equal(needsCost({ name: 'BIG FISH', cost: 117.3 }), false);
+  assert.equal(needsCost({ name: 'BIG FISH', cost: '117.30' }), false, 'costs arrive as strings from the API');
+  assert.equal(needsSetup({ name: 'BIG FISH', cost: 117.3, vendor_id: 'bv' }), false,
+    'a priced game with a real distributor is ready to order');
+  assert.equal(needsSetup({ name: 'Cowgirls', cost: 0, vendor_id: 'bv' }), false,
+    'no price is fine — the PO prints ? and asks the vendor');
 });
 
-test('productsNeedingSetup lists only the unpriced ones, alphabetically', () => {
+test('productsNeedingSetup lists the ones with no distributor, alphabetically', () => {
   const list = productsNeedingSetup([
-    { name: 'Zeta', cost: 0 }, { name: 'BIG FISH', cost: 117.3 }, { name: 'Alpha', cost: 0 },
+    { name: 'Zeta', vendor_id: UNKNOWN_VENDOR, cost: 64.6 },
+    { name: 'BIG FISH', vendor_id: 'bv', cost: 117.3 },
+    { name: 'Alpha', vendor_id: null, cost: 0 },
+    { name: 'Priced later', vendor_id: 'md', cost: 0 },
   ]);
-  assert.deepEqual(list.map((p) => p.name), ['Alpha', 'Zeta']);
+  assert.deepEqual(list.map((p) => p.name), ['Alpha', 'Zeta'],
+    'a known distributor with no price is orderable; an unknown distributor is not');
 });
 
 // ---------- inventory filters ----------
@@ -356,18 +365,17 @@ test('only flash games need a ticket count', () => {
 });
 
 test('retyping a flash game as a strip clears its ticket requirement', () => {
-  const before = { name: 'Bingo Shark', type: 'flash', cost: 64.6, tickets: null };
+  const before = { name: 'Bingo Shark', vendor_id: 'bv', type: 'flash', cost: 64.6, tickets: null };
   assert.equal(needsAnyUpdate(before), true);
   const after = { ...before, type: 'strip' };
   assert.equal(needsAnyUpdate(after), false, 'one edit clears every update tag on the row');
 });
 
-test('only a missing cost blocks ordering; other gaps just ask for an update', () => {
-  const noType = { name: 'Caribbean Gold', type: null, cost: 89.1, tickets: 1440 };
-  assert.equal(needsCost(noType), false);
+test('only a missing distributor blocks ordering; other gaps just ask for an update', () => {
+  const noType = { name: 'Caribbean Gold', vendor_id: 'pbf', type: null, cost: 89.1, tickets: 1440 };
   assert.equal(needsSetup(noType), false, 'a blank type must not stop a PO');
   assert.equal(needsAnyUpdate(noType), true, 'but it still shows update');
-  const done = { name: 'BIG FISH', type: 'flash', cost: 117.3, tickets: 1440 };
+  const done = { name: 'BIG FISH', vendor_id: 'bv', type: 'flash', cost: 117.3, tickets: 1440 };
   assert.equal(needsAnyUpdate(done), false);
 });
 
@@ -596,4 +604,36 @@ test('money formats properly even when the value is a string', () => {
   assert.equal(fmtMoney('64.60'), '$64.60');
   assert.equal(fmtMoney(1234.5), '$1,234.50');
   assert.equal(fmtMoney(null), '$0.00');
+});
+
+// ---- a game whose distributor nobody has confirmed ----
+test('the unknown-distributor placeholder counts as a gap, not a vendor', () => {
+  assert.equal(needsVendor({ vendor_id: UNKNOWN_VENDOR }), true);
+  assert.equal(needsVendor({ vendor_id: null }), true);
+  assert.equal(needsVendor({}), true);
+  assert.equal(needsVendor({ vendor_id: 'bv' }), false);
+});
+
+test('a fully priced game still needs updating while its distributor is unknown', () => {
+  const p = { name: 'Little Horses', vendor_id: UNKNOWN_VENDOR, type: 'flash', cost: 64.6, tickets: 1440 };
+  assert.equal(needsCost(p), false);
+  assert.equal(needsTickets(p), false);
+  assert.equal(needsAnyUpdate(p), true, 'the distributor gap has to keep it flagged');
+  assert.equal(needsSetup(p), true, 'and it must stay off any order');
+});
+
+test('an unknown-distributor game cannot reach a purchase order', () => {
+  const V = [
+    { id: 'bv', name: 'Bingo Vision', tax_rate: 0.0975, packing_fee: 0 },
+    { id: 'unknown', name: 'Unknown — needs confirming', tax_rate: 0.0975, packing_fee: 0 },
+  ];
+  const P = [
+    { id: 'A', vendor_id: 'bv', name: 'Known Game', type: 'flash', cost: 50, tickets: 100, price_per_ticket: 1 },
+    { id: 'B', vendor_id: 'unknown', name: 'Little Horses', type: 'flash', cost: 60, tickets: 100, price_per_ticket: 1 },
+  ];
+  const drafts = buildDrafts({ A: 2, B: 5 }, P, V);
+  assert.equal(drafts.length, 1, 'no PO is built for a vendor we cannot email');
+  assert.equal(drafts[0].vendor_id, 'bv');
+  assert.ok(!drafts[0].lines.some((l) => l.product_id === 'B'),
+    'and it must not be smuggled onto someone else’s order either');
 });

@@ -63,6 +63,8 @@ export function buildDrafts(qty, products, vendors) {
     if (!(n > 0)) continue;
     const p = pmap[pid];
     if (!p) continue;
+    // no confirmed distributor means no one to send the PO to — keep it off the order
+    if (!p.vendor_id || p.vendor_id === 'unknown') continue;
     (byVendor[p.vendor_id] ||= []).push({
       product_id: pid, name_snapshot: lineName(p), qty: n,
       cost: Number(p.cost) > 0 ? p.cost : 0,

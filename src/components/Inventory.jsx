@@ -5,7 +5,7 @@ import { countByProduct } from '../lib/logic/boxes.js';
 
 import { SESSIONS } from '../lib/sessions.js';
 import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.js';
-import { needsCost, needsType, needsTickets } from '../lib/logic/setup.js';
+import { needsCost, needsType, needsTickets, needsVendor } from '../lib/logic/setup.js';
 import UpdateGame from './UpdateGame.jsx';
 
 const COLS = [
@@ -197,7 +197,9 @@ export default function Inventory() {
                   {r.p.name}
                   {needsCost(r.p) && <span className="badge b-gold" style={{ marginLeft: 6 }} title="No unit cost — can't be ordered or received until set">can't order</span>}
                 </td>
-                <td className="dim" style={{ fontSize: 12 }}>{vmap[r.p.vendor_id]?.name}</td>
+                <td className="dim" style={{ fontSize: 12 }}>
+                  {needsVendor(r.p) ? <Upd p={r.p} /> : vmap[r.p.vendor_id]?.name}
+                </td>
                 <td className="dimmer" style={{ fontSize: 12 }}>{needsType(r.p) ? <Upd p={r.p} /> : r.p.type}</td>
                 <td className="r mono">{needsTickets(r.p) ? <Upd p={r.p} /> : (r.p.tickets ? r.p.tickets.toLocaleString() : '—')}</td>
                 <td className="r mono dim">${ticketPrice(r.p)}</td>
