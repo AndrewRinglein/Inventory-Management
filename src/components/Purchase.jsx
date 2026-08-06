@@ -4,7 +4,7 @@ import { fmtMoney, buildDrafts, ticketPrice } from '../lib/logic/po.js';
 import { countByProduct } from '../lib/logic/boxes.js';
 import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.js';
 import { needsCost, needsType, needsTickets, needsVendor } from '../lib/logic/setup.js';
-import { priceParts } from '../lib/logic/pricing.js';
+import { priceParts, baseCost, packUnits } from '../lib/logic/pricing.js';
 import UpdateGame from './UpdateGame.jsx';
 
 const TIX_FILTERS = [
@@ -34,6 +34,9 @@ const sortVal = (p, k, cnt) => {
     case 'price': return ticketPrice(p);
     case 'vendor': return p.vendor_id || '';
     case 'type': return p.type || '';
+    case 'base': return baseCost(p);
+    case 'units': return packUnits(p);
+    case 'packing': return Number(p.packing_units) || 0;
     case 'cost': return Number(p.cost) || 0;
     case 'live': return (c.inv || 0) + (c.open || 0);
     case 'onorder': return c.onorder || 0;
@@ -163,12 +166,15 @@ export default function Purchase() {
                 {GAME_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
             </th>
-            <th className="r sortable" style={{ width: 96 }} onClick={() => sortBy('cost')}>
-              <div>Unit cost{arrow('cost')}</div>
+            <th className="r sortable" style={{ width: 94 }} onClick={() => sortBy('base')} title="What one unit costs">
+              <div>Base ${arrow('base')}</div>
               <select value={miscF} onClick={stop} onChange={(e) => setMiscF(e.target.value)} style={{ fontWeight: 400, marginTop: 3, width: '100%' }} title="Cherry tickets and dauber supplies">
                 {MISC_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
               </select>
             </th>
+            <th className="r sortable" style={{ width: 48 }} onClick={() => sortBy('units')} title="Units per ordered box">×{arrow('units')}</th>
+            <th className="r sortable" style={{ width: 86 }} onClick={() => sortBy('packing')} title="Packing charged on one ordered box">Packing{arrow('packing')}</th>
+            <th className="r sortable" style={{ width: 104 }} onClick={() => sortBy('cost')} title="Base × units + packing">Box total{arrow('cost')}</th>
             <th className="r sortable" style={{ width: 110 }} onClick={() => sortBy('live')}>
               <div>Live{arrow('live')}</div>
               <select value={stockF} onClick={stop} onChange={(e) => setStockF(e.target.value)} style={{ fontWeight: 400, marginTop: 3, width: '100%' }}>
@@ -182,6 +188,7 @@ export default function Purchase() {
             {rows.map((p) => {
               const n = orderQty[p.id] || 0;
               const c = cnt[p.id] || {};
+              const pp = priceParts(p, vmap[p.vendor_id]);
               return (
                 <tr key={p.id} className={n ? 'hl' : ''}>
                   <td className="first">{p.name}</td>
@@ -195,20 +202,13 @@ export default function Purchase() {
                     {needsCost(p)
                       ? <button className="tbd" title="No price on our side — the PO goes out with a ? and the vendor fills it in. Click to enter it now."
                           onClick={() => setUpdPid(p.id)}>?</button>
-                      : (() => {
-                          const pp = priceParts(p, vmap[p.vendor_id]);
-                          return (
-                            <span title={`${fmtMoney(pp.base)} per unit × ${pp.units}${pp.packing ? ` + ${fmtMoney(pp.packing)} packing` : ''}`}>
-                              {fmtMoney(pp.box)}
-                              {(pp.multiplied || pp.packing > 0) && (
-                                <div className="dimmer" style={{ fontSize: 10.5 }}>
-                                  {pp.multiplied && `${fmtMoney(pp.base)} ×${pp.units}`}
-                                  {pp.packing > 0 && ` +${fmtMoney(pp.packing)} pk`}
-                                </div>
-                              )}
-                            </span>
-                          );
-                        })()}
+                      : fmtMoney(pp.base)}
+                  </td>
+                  <td className="r mono dimmer">{pp.multiplied ? `×${pp.units}` : '—'}</td>
+                  <td className="r mono">{pp.packing > 0 ? fmtMoney(pp.packing) : <span className="dimmer">—</span>}</td>
+                  <td className="r mono">
+                    {needsCost(p) ? <span className="dimmer">—</span> : <b>{fmtMoney(pp.allIn)}</b>}
+                    {pp.splits && <div className="dimmer" style={{ fontSize: 10.5 }}>→ {pp.split} boxes @ {fmtMoney(pp.perBox)}</div>}
                   </td>
                   <td className="r mono">{(c.inv || 0) + (c.open || 0)}</td>
                   <td className="r mono dimmer">{c.onorder || 0}</td>
@@ -217,11 +217,19 @@ export default function Purchase() {
                       ? <button className="badge b-gold" style={{ border: 0, cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: 600 }}
                           title="We don't know who supplies this yet, so there's nobody to send the order to. Click to set the distributor."
                           onClick={() => setUpdPid(p.id)}>needs distributor</button>
-                      : <input className={'qty' + (needsCost(p) ? ' tbd-qty' : '')} type="number" min="0" value={n || ''} placeholder="" disabled={!editable}
-                          title={needsCost(p) ? "You can order this — the PO will show ? and ask the vendor for their price" : ''}
-                          onChange={(e) => setQty(p.id, e.target.value)} />}
+                      : <>
+                          <input className={'qty' + (needsCost(p) ? ' tbd-qty' : '')} type="number" min="0" value={n || ''} placeholder="" disabled={!editable}
+                            title={needsCost(p) ? "You can order this — the PO will show ? and ask the vendor for their price" : ''}
+                            onChange={(e) => setQty(p.id, e.target.value)} />
+                          {pp.splits && n > 0 && <div className="dimmer" style={{ fontSize: 10.5 }}>= {n * pp.split} boxes</div>}
+                        </>}
                   </td>
-                  <td className="r mono last">{n ? (needsCost(p) ? <span className="tbd">?</span> : fmtMoney(n * p.cost)) : ''}</td>
+                  <td className="r mono last">
+                    {n ? (needsCost(p) ? <span className="tbd">?</span> : <>
+                      <b>{fmtMoney(n * pp.allIn)}</b>
+                      {pp.packing > 0 && <div className="dimmer" style={{ fontSize: 10.5 }}>incl. {fmtMoney(n * pp.packing)} packing</div>}
+                    </>) : ''}
+                  </td>
                 </tr>
               );
             })}
