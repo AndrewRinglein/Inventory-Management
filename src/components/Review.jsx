@@ -11,9 +11,17 @@ export default function Review() {
   const [emailIdx, setEmailIdx] = useState(0);
   const [busy, setBusy] = useState(false);
   const [edits, setEdits] = useState({});   // idx -> {subject, body}
+  const [recording, setRecording] = useState(false);          // the "record only" dialog
+  const [placedOn, setPlacedOn] = useState(() => new Date().toISOString().slice(0, 10));
+  const [vendorRef, setVendorRef] = useState('');
 
   const drafts = useMemo(() => buildDrafts(orderQty, products, vendors), [orderQty, products, vendors]);
   const totalTbd = drafts.reduce((a, d) => a + (d.tbd || 0), 0);
+  // what actually lands on the shelf: a case can split into several boxes
+  const totalBoxes = drafts.reduce((a, d) => a + d.lines
+    .filter((l) => l.kind !== 'fee' && l.product_id)
+    .reduce((x, l) => x + l.qty * (l.split_boxes || 1), 0), 0);
+  const vendorNames = drafts.map((d) => d.vendor_name).join(', ');
 
   const emailCfg = settings.email || {};
   const hallName = HALL_NAMES[hall];
@@ -38,26 +46,54 @@ export default function Review() {
   };
   const cur = view(Math.min(emailIdx, emails.list.length - 1));
 
-  const sendAll = async () => {
-    if (!can('send')) { setToast('Your role cannot send orders for this hall'); return; }
+  // A yyyy-mm-dd from a date input is midnight UTC, which lands on the previous
+  // day west of Greenwich — a PO recorded as July 1 would file itself under June.
+  // Pin it to local noon so the calendar date is the one the person picked.
+  const atLocalNoon = (ymd) => {
+    const [y, m, d] = ymd.split('-').map(Number);
+    return new Date(y, m - 1, d, 12, 0, 0).toISOString();
+  };
+
+  /**
+   * Write the order to the books.
+   *
+   * recordedOnly skips the emails entirely — for an order that was already placed
+   * some other way (phoned in, emailed by hand) and just needs to exist in the
+   * record so stock and spend come out right.
+   */
+  const commit = async ({ recordedOnly }) => {
+    if (!can(recordedOnly ? 'order' : 'send')) {
+      setToast(`Your role cannot ${recordedOnly ? 'record' : 'send'} orders for this hall`); return;
+    }
     if (!drafts.length || busy) return;
     setBusy(true);
     let pos = null;
     try {
+      const placedAt = recordedOnly ? atLocalNoon(placedOn) : new Date().toISOString();
       // ALWAYS number from the freshly-stored sequence (never React state) —
       // prevents duplicate PO numbers after a failed send or a second open window.
       let seq = { ...((await store.getSetting('po_sequence')) || {}) };
       const numbered = drafts.map((d) => {
-        const r = nextPoNum(seq, hall, d.vendor_id);
+        // number it in the month it was placed, not the month it was typed in
+        const r = nextPoNum(seq, hall, d.vendor_id, new Date(placedAt));
         seq = r.seq;
         return { ...d, num: r.num };
       });
       await store.setSetting('po_sequence', seq);
-      pos = await store.createSentPos(hall, drafts, numbered);
+      pos = await store.createSentPos(hall, drafts, numbered, {
+        recordedOnly, placedAt, vendorRef: recordedOnly ? vendorRef.trim() : '',
+      });
       // POs exist from here on: clear the builder immediately so a retry can never duplicate them
       await store.clearOrderQty(hall);
       await reloadHall();
       await reloadSettings();
+
+      if (recordedOnly) {
+        setToast(`${pos.length} PO(s) recorded, dated ${new Date(placedAt).toLocaleDateString()} — no email sent`, null, 6000);
+        setScreen('orders');
+        return;
+      }
+
       const finalEmails = buildOrderEmails(
         numbered.map((d, i) => ({ ...d, sent_at: pos[i]?.sent_at })),
         vendors, hallName, hallAddress, accounting, senderFor(settings.sender, hall)
@@ -72,12 +108,15 @@ export default function Review() {
         setToast(`${pos.length} PO(s) WERE created, but the emails failed: ${err.message}. Find them under Open Orders — do not re-enter the order.`, null, 9000);
         setScreen('orders');
       } else {
-        setToast('Send failed: ' + err.message);
+        setToast((recordedOnly ? 'Could not record that order: ' : 'Send failed: ') + err.message);
       }
     } finally {
       setBusy(false);
+      setRecording(false);
     }
   };
+
+  const sendAll = () => commit({ recordedOnly: false });
 
   if (!drafts.length) {
     return (
@@ -94,6 +133,10 @@ export default function Review() {
         <div className="h1">Review &amp; Send — {hallName}</div>
         <div className="grow" />
         <button className="btn ghost" onClick={() => setScreen('purchase')}>← Back to builder</button>
+        <button className="btn ghost" disabled={busy || !can('order')} onClick={() => setRecording(true)}
+          title="For an order that was already placed some other way — writes it to the books without emailing anyone">
+          Record without sending
+        </button>
         <button className="btn primary" disabled={busy || !can('send')} onClick={sendAll}
           title={can('send') ? '' : 'Your role cannot send orders for this hall'}>
           {busy ? 'Sending…' : `Send all (${emails.list.length} emails)`}
@@ -176,6 +219,44 @@ export default function Review() {
           )}
         </div>
       </div>
+
+      {recording && (
+        <div className="modal-bg" onClick={() => !busy && setRecording(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 480 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>
+              Record {emails.numbered.length} order{emails.numbered.length === 1 ? '' : 's'} without sending
+            </div>
+            <p style={{ fontSize: 13 }}>
+              This writes {emails.numbered.length === 1 ? 'the order' : 'the orders'} to the books exactly as a sent order —
+              same PO number, same lines, {totalBoxes} box{totalBoxes === 1 ? '' : 'es'} on order — but no email goes to{' '}
+              {emails.numbered.length === 1 ? vendorNames : 'the distributors'}. Use it for an order that was already
+              placed by phone or by hand.
+            </p>
+            <label style={{ display: 'block', fontSize: 12.5, marginTop: 12 }}>
+              Date it was placed
+              <input type="date" value={placedOn} max={new Date().toISOString().slice(0, 10)}
+                onChange={(e) => setPlacedOn(e.target.value)}
+                style={{ display: 'block', marginTop: 4, width: 180 }} />
+            </label>
+            <div className="dimmer" style={{ fontSize: 11.5, marginTop: 4 }}>
+              The PO number and the month's spend both follow this date, so put in the real one.
+            </div>
+            <label style={{ display: 'block', fontSize: 12.5, marginTop: 12 }}>
+              Their reference <span className="dimmer">(optional — their order or invoice number, if you have it)</span>
+              <input type="text" value={vendorRef} placeholder="e.g. 8842 or INV-10233"
+                onChange={(e) => setVendorRef(e.target.value)}
+                style={{ display: 'block', marginTop: 4, width: '100%' }} />
+            </label>
+            <div style={{ display: 'flex', gap: 8, marginTop: 18 }}>
+              <button className="btn primary" disabled={busy} onClick={() => commit({ recordedOnly: true })}>
+                {busy ? 'Recording…' : 'Record — no email'}
+              </button>
+              <div style={{ flex: 1 }} />
+              <button className="btn ghost" disabled={busy} onClick={() => setRecording(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

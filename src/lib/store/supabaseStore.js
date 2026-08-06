@@ -67,14 +67,26 @@ export class SupabaseStore {
   async clearOrderQty(hallId) { ok(await this.sb.from('order_qty').delete().eq('hall_id', hallId)); }
 
   // ---- purchase orders ----
-  async createSentPos(hallId, _drafts, numbered) {
+  /**
+   * Create the POs for an order.
+   *
+   * opts.recordedOnly marks an order that was placed outside this system — no
+   * email will follow. opts.placedAt backdates it, which is the whole point of
+   * recording one: an order phoned in two weeks ago has to sit in the record on
+   * the day it was actually placed, or the month's spend and the age of what's
+   * on order both read wrong. The boxes are backdated with it.
+   */
+  async createSentPos(hallId, _drafts, numbered, opts = {}) {
+    const { recordedOnly = false, placedAt = null, vendorRef = '' } = opts;
+    const when = placedAt || new Date().toISOString();
     const created = [];
     for (const d of numbered) {
       const po = ok(await this.sb.from('purchase_orders').insert({
         num: d.num, hall_id: hallId, vendor_id: d.vendor_id, status: 'sent',
         subtotal: d.subtotal, tax: d.tax, total: d.total,
         price_tbd_lines: d.lines.filter((l) => l.price_tbd).length,
-        sent_at: new Date().toISOString(),
+        sent_at: when, created_at: when,
+        recorded_only: recordedOnly, vendor_ref: vendorRef || null,
       }).select().single());
       // split_boxes / per_box_cost are how the boxes get built, not part of the PO record
       ok(await this.sb.from('po_lines').insert(
@@ -86,8 +98,15 @@ export class SupabaseStore {
         Array.from({ length: l.qty * (l.split_boxes || 1) }, () => ({
           hall_id: hallId, product_id: l.product_id, po_id: po.id,
           cost: l.per_box_cost ?? l.cost, price_tbd: !!l.price_tbd, state: 'on_order',
+          ordered_at: when,
         })));
       if (boxes.length) ok(await this.sb.from('boxes').insert(boxes));
+      if (recordedOnly) {
+        await this.logEvent('po.record', 'purchase_orders', po.num, {
+          label: `${hallId === 'sc' ? 'Santa Clara' : 'Redwood City'} — recorded PO ${po.num} (no email sent)`,
+          total: po.total, vendor_id: po.vendor_id, placed_at: when, vendor_ref: vendorRef || null,
+        });
+      }
       created.push(po);
     }
     return created;

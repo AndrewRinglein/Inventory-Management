@@ -86,15 +86,20 @@ export class DemoStore {
   async clearOrderQty(hallId) { this.db.order_qty[hallId] = {}; this._save(); }
 
   // ---- purchase orders ----
-  async createSentPos(hallId, drafts, numbered) {
+  async createSentPos(hallId, drafts, numbered, opts = {}) {
     // numbered: [{...draft, num}] — numbering handled by caller via settings po_sequence
+    // opts.recordedOnly: placed outside this system, no email follows.
+    // opts.placedAt: backdate it (and its boxes) to the day it was really placed.
+    const { recordedOnly = false, placedAt = null, vendorRef = '' } = opts;
+    const when = placedAt || new Date().toISOString();
     const created = [];
     for (const d of numbered) {
       const po = {
         id: uid(), num: d.num, hall_id: hallId, vendor_id: d.vendor_id, status: 'sent',
         subtotal: d.subtotal, tax: d.tax, total: d.total,
         price_tbd_lines: d.lines.filter((l) => l.price_tbd).length,
-        sent_at: new Date().toISOString(), created_at: new Date().toISOString(),
+        sent_at: when, created_at: when,
+        recorded_only: recordedOnly, vendor_ref: vendorRef || null,
       };
       this.db.purchase_orders.push(po);
       for (const l of d.lines) {
@@ -105,12 +110,13 @@ export class DemoStore {
           this.db.boxes.push({
             id: uid(), hall_id: hallId, product_id: l.product_id, po_id: po.id,
             shipment_id: null, serial: '', cost: per_box_cost ?? l.cost, price_tbd: !!l.price_tbd, state: 'on_order',
-            session_tag: null, ordered_at: new Date().toISOString(),
+            session_tag: null, ordered_at: when,
             received_at: null, opened_at: null, sold_out_at: null,
           });
         }
       }
-      this._event('insert', 'purchase_orders', po.num, {});
+      this._event(recordedOnly ? 'po.record' : 'insert', 'purchase_orders', po.num,
+        recordedOnly ? { label: `Recorded PO ${po.num} (no email sent)`, placed_at: when, vendor_ref: vendorRef || null } : {});
       created.push(po);
     }
     this._save();

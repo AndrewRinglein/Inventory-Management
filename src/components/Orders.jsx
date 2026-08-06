@@ -9,6 +9,12 @@ const STATUS = {
   closed: ['b-gray', 'Closed'],
 };
 
+// A recorded order is awaiting delivery just like a sent one — but "Sent" would
+// claim this system emailed the distributor, and it didn't.
+const statusOf = (p) => (p.recorded_only && p.status === 'sent'
+  ? ['b-gold', 'Placed — awaiting delivery']
+  : STATUS[p.status]);
+
 export default function Orders() {
   const { hall, pos, allPos, boxes, vendors, store, reloadHall, setToast, setScreen, setReceivingPo, requirePin, can } = useContext(AppCtx);
   const [sel, setSel] = useState(null);
@@ -115,7 +121,7 @@ export default function Orders() {
                   style={{ cursor: 'pointer', background: cur?.id === p.id ? '#eef3f5' : 'transparent' }}>
                   <td className="first mono" style={{ fontSize: 12 }}>{p.num}</td>
                   <td style={{ fontSize: 12 }}>{vmap[p.vendor_id]?.name}</td>
-                  <td><span className={'badge ' + STATUS[p.status][0]} style={{ fontSize: 10 }}>{STATUS[p.status][1]}</span></td>
+                  <td><span className={'badge ' + statusOf(p)[0]} style={{ fontSize: 10 }}>{statusOf(p)[1]}</span></td>
                   <td className="r mono last">{fmtMoney(p.total)}</td>
                 </tr>
               ))}
@@ -131,12 +137,18 @@ export default function Orders() {
           <div className="card" style={{ overflow: 'hidden' }}>
             <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
               <b className="mono">{cur.num}</b>
-              <span className={'badge ' + STATUS[cur.status][0]}>{STATUS[cur.status][1]}</span>
+              <span className={'badge ' + statusOf(cur)[0]}>{statusOf(cur)[1]}</span>
               {cur.archived_at && (
                 <span className="badge b-gray" title={`Archived ${new Date(cur.archived_at).toLocaleDateString()}`}>archived</span>
               )}
+              {cur.recorded_only && (
+                <span className="badge b-gray" title="Entered for the record — this system did not email the distributor">
+                  recorded — not sent
+                </span>
+              )}
               <span className="dimmer" style={{ fontSize: 12 }}>
-                {vmap[cur.vendor_id]?.name} · sent {cur.sent_at ? new Date(cur.sent_at).toLocaleDateString() : '—'}
+                {vmap[cur.vendor_id]?.name} · {cur.recorded_only ? 'placed' : 'sent'} {cur.sent_at ? new Date(cur.sent_at).toLocaleDateString() : '—'}
+                {cur.vendor_ref && <> · their ref <span className="mono">{cur.vendor_ref}</span></>}
                 {' · '}{itemLines.length} item{itemLines.length === 1 ? '' : 's'}, {orderedBoxes} box{orderedBoxes === 1 ? '' : 'es'}
                 {tbdLines > 0 && <span style={{ color: 'var(--gold)' }}> · {tbdLines} awaiting price</span>}
               </span>
@@ -205,7 +217,13 @@ export default function Orders() {
             </table>
             <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border)' }}>
               <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.8, color: 'var(--ink-3)', marginBottom: 6 }}>Emails on this PO</div>
-              {emails.length === 0 && <span className="dimmer" style={{ fontSize: 12.5 }}>None logged.</span>}
+              {emails.length === 0 && (
+                <span className="dimmer" style={{ fontSize: 12.5 }}>
+                  {cur.recorded_only
+                    ? 'None — this order was recorded for the books, not sent from here. The distributor was contacted some other way.'
+                    : 'None logged.'}
+                </span>
+              )}
               {emails.map((e) => (
                 <div key={e.id} style={{ fontSize: 12.5, padding: '3px 0' }}>
                   <span className="mono dimmer">{(e.created_at || '').slice(5, 10)}</span> · {e.subject}
