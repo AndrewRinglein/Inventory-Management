@@ -43,11 +43,14 @@ const greet = (name) => (name ? `Hi ${name},` : 'Hello,');
  * A line we don't have a price for prints "?" in both money columns rather than
  * $0.00 — the vendor needs to see a question, not a number that looks settled.
  */
-const line = (l) => {
+const line = (l, width = 38) => {
   const ea = l.price_tbd ? '?' : fmtMoney(l.cost);
   const ext = l.price_tbd ? '?' : fmtMoney(l.qty * l.cost);
-  return `  ${String(l.qty).padStart(2)} x ${l.name_snapshot.padEnd(38).slice(0, 38)}  ${ea.padStart(9)} ea  =${ext.padStart(11)}`;
+  return `  ${String(l.qty).padStart(3)} x ${l.name_snapshot.padEnd(width)}  ${ea.padStart(10)} ea  =${ext.padStart(12)}`;
 };
+
+/** Widen the name column to fit the longest one, so nothing is cut mid-word. */
+const nameWidth = (lines) => Math.max(28, ...lines.map((l) => l.name_snapshot.length));
 
 function poBody(po, vendor, hallName, hallAddress, sender) {
   // hallAddress may be a plain string or a resolver, because a hall can send
@@ -65,15 +68,14 @@ function poBody(po, vendor, hallName, hallAddress, sender) {
     n ? `` : null,
     n ? `Items below marked with a ? we don't have a current price. If you could send over pricing, we will update and resend same PO with those details.` : null,
     ``,
-    ...po.lines.map(line),
+    ...po.lines.map((l) => line(l, nameWidth(po.lines))),
     ``,
     `  ${'Subtotal:'.padEnd(20)}${fmtMoney(po.subtotal).padStart(11)}`,
     `  ${`Tax (${(vendor.tax_rate * 100).toFixed(2)}%):`.padEnd(20)}${fmtMoney(po.tax).padStart(11)}`,
     `  ${'Total:'.padEnd(20)}${fmtMoney(po.total).padStart(11)}`,
     n ? `  (covers the priced lines only — the "?" items are on top of this)` : null,
     ``,
-    address ? `Please deliver to:\n${address}` : '',
-    address ? `` : '',
+    address ? `Please deliver to:\n${address}\n` : null,
     `Could you confirm you got this and let me know when it should arrive? Please put ${po.num} on the invoice so we can match it up when it lands.`,
     `Ordered ${date}.`,
     ...signature(sender, hallName),
