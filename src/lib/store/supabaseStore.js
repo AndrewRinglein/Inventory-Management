@@ -78,7 +78,7 @@ export class SupabaseStore {
       }).select().single());
       // split_boxes / per_box_cost are how the boxes get built, not part of the PO record
       ok(await this.sb.from('po_lines').insert(
-        d.lines.map(({ split_boxes, per_box_cost, ...l }) => ({ po_id: po.id, ...l }))));
+        d.lines.map(({ split_boxes, per_box_cost, base_cost, pack_units, ...l }) => ({ po_id: po.id, ...l }))));
       // fee lines (packing charges) are not physical goods — no boxes for them.
       // One ordered unit can become several inventory boxes (a case of totes), each
       // carrying its share of the landed cost.

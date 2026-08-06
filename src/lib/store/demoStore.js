@@ -98,7 +98,7 @@ export class DemoStore {
       };
       this.db.purchase_orders.push(po);
       for (const l of d.lines) {
-        const { split_boxes, per_box_cost, ...rec } = l;
+        const { split_boxes, per_box_cost, base_cost, pack_units, ...rec } = l;
         this.db.po_lines.push({ id: uid(), po_id: po.id, ...rec });
         if (l.kind === 'fee' || !l.product_id) continue;   // packing charge: no boxes
         for (let i = 0; i < l.qty * (split_boxes || 1); i++) {

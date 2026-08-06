@@ -39,18 +39,58 @@ function signature(sender = {}, hallName) {
 const greet = (name) => (name ? `Hi ${name},` : 'Hello,');
 
 /**
- * Right-aligned money column so the numbers stay readable in plain text.
- * A line we don't have a price for prints "?" in both money columns rather than
- * $0.00 — the vendor needs to see a question, not a number that looks settled.
+ * A PO line, printed as the parts it is actually made of:
+ *
+ *     1 x 10-Pack of strips Biker Double up   $64.00  x80   $320.00   $5,440.00
+ *
+ * base cost, units in the box, packing on that box, and what the line comes to.
+ * Packing sits on the line that earned it rather than as a lump at the bottom —
+ * a single "97 units of packing" figure tells nobody what one box really costs,
+ * and it is the per-box number a vendor and a hall need to agree on.
  */
-const line = (l, width = 38) => {
-  const ea = l.price_tbd ? '?' : fmtMoney(l.cost);
-  const ext = l.price_tbd ? '?' : fmtMoney(l.qty * l.cost);
-  return `  ${String(l.qty).padStart(3)} x ${l.name_snapshot.padEnd(width)}  ${ea.padStart(10)} ea  =${ext.padStart(12)}`;
+const money = (n) => fmtMoney(n);
+
+/**
+ * Simpler row for the shortage and delivered-$ emails. Those are about what
+ * arrived and what to pay, not how a price is built, so they keep the plain
+ * quantity-and-money shape. Packing rides along in the line total.
+ */
+const line = (l) => {
+  const each = Number(l.cost) + (Number(l.packing_each) || 0);
+  return `  ${String(l.qty).padStart(3)} x ${l.name_snapshot.padEnd(40)}  ${fmtMoney(each).padStart(10)} ea  =${fmtMoney(l.qty * each).padStart(12)}`;
 };
 
-/** Widen the name column to fit the longest one, so nothing is cut mid-word. */
-const nameWidth = (lines) => Math.max(28, ...lines.map((l) => l.name_snapshot.length));
+function lineRow(l, w) {
+  const packing = Number(l.packing_each) || 0;
+  const units = Math.max(1, parseInt(l.pack_units) || 1);
+  const base = l.base_cost != null ? Number(l.base_cost) : Number(l.cost) || 0;
+  const total = l.price_tbd ? '?' : money(l.qty * (Number(l.cost) + packing));
+  return [
+    String(l.qty).padStart(4),
+    ' x ',
+    l.name_snapshot.padEnd(w.name),
+    (l.price_tbd ? '?' : money(base)).padStart(w.base),
+    (units > 1 ? `x${units}` : '').padStart(w.units),
+    (packing > 0 ? money(packing) : '').padStart(w.pack),
+    total.padStart(w.total),
+  ].join('');
+}
+
+function lineHeader(w) {
+  return [
+    ' Qty', '   ', 'Item'.padEnd(w.name),
+    'Base'.padStart(w.base), 'Units'.padStart(w.units),
+    'Packing'.padStart(w.pack), 'Line total'.padStart(w.total),
+  ].join('');
+}
+
+/** Column widths sized to the content, so nothing is cut and nothing floats. */
+function widths(lines) {
+  return {
+    name: Math.max(20, ...lines.map((l) => l.name_snapshot.length)) + 2,
+    base: 12, units: 7, pack: 11, total: 14,
+  };
+}
 
 function poBody(po, vendor, hallName, hallAddress, sender) {
   // hallAddress may be a plain string or a resolver, because a hall can send
@@ -61,6 +101,11 @@ function poBody(po, vendor, hallName, hallAddress, sender) {
   });
   const open = po.lines.filter((l) => l.price_tbd);
   const n = open.length;
+  const w = widths(po.lines);
+  const anyPacking = po.lines.some((l) => (Number(l.packing_each) || 0) > 0);
+  const priced = po.lines.filter((l) => !l.price_tbd);
+  const goodsTotal = priced.reduce((a, l) => a + l.qty * Number(l.cost), 0);
+  const packingTotal = priced.reduce((a, l) => a + l.qty * (Number(l.packing_each) || 0), 0);
   return [
     greet(vendor.contact_name),
     ``,
@@ -68,12 +113,19 @@ function poBody(po, vendor, hallName, hallAddress, sender) {
     n ? `` : null,
     n ? `Items below marked with a ? we don't have a current price. If you could send over pricing, we will update and resend same PO with those details.` : null,
     ``,
-    ...po.lines.map((l) => line(l, nameWidth(po.lines))),
+    lineHeader(w),
+    '-'.repeat(4 + 3 + w.name + w.base + w.units + w.pack + w.total),
+    ...po.lines.map((l) => lineRow(l, w)),
+    '-'.repeat(4 + 3 + w.name + w.base + w.units + w.pack + w.total),
     ``,
-    `  ${'Subtotal:'.padEnd(20)}${fmtMoney(po.subtotal).padStart(11)}`,
-    `  ${`Tax (${(vendor.tax_rate * 100).toFixed(2)}%):`.padEnd(20)}${fmtMoney(po.tax).padStart(11)}`,
-    `  ${'Total:'.padEnd(20)}${fmtMoney(po.total).padStart(11)}`,
+    // split the subtotal so both sides can see what was goods and what was packing
+    anyPacking ? `  ${'Stock:'.padEnd(20)}${fmtMoney(goodsTotal).padStart(12)}` : null,
+    anyPacking ? `  ${'Packing:'.padEnd(20)}${fmtMoney(packingTotal).padStart(12)}` : null,
+    `  ${'Subtotal:'.padEnd(20)}${fmtMoney(po.subtotal).padStart(12)}`,
+    `  ${`Tax (${(vendor.tax_rate * 100).toFixed(2)}%):`.padEnd(20)}${fmtMoney(po.tax).padStart(12)}`,
+    `  ${'Total:'.padEnd(20)}${fmtMoney(po.total).padStart(12)}`,
     n ? `  (covers the priced lines only — the "?" items are on top of this)` : null,
+    anyPacking ? `  Packing is included in each line above, not added separately.` : null,
     ``,
     address ? `Please deliver to:\n${address}\n` : null,
     `Could you confirm you got this and let me know when it should arrive? Please put ${po.num} on the invoice so we can match it up when it lands.`,

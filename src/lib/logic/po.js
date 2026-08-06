@@ -1,6 +1,6 @@
 // Purchase-order math and numbering. Pure functions — unit tested in tests/logic.test.js.
 
-import { perBoxValue } from './pricing.js';
+import { perBoxValue, baseCost, packUnits, packingFor } from './pricing.js';
 
 export const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 
@@ -30,7 +30,8 @@ export function lineName(product) {
  */
 export function poTotals(lines, taxRate) {
   const priced = lines.filter((l) => !l.price_tbd);
-  const subtotal = round2(priced.reduce((a, l) => a + l.qty * l.cost, 0));
+  // packing rides on the line that earned it, so it is part of that line's money
+  const subtotal = round2(priced.reduce((a, l) => a + l.qty * (l.cost + (Number(l.packing_each) || 0)), 0));
   const tax = round2(subtotal * (taxRate || 0));
   const tbd = lines.filter((l) => l.price_tbd).length;
   return { subtotal, tax, total: round2(subtotal + tax), tbd, partial: tbd > 0 };
@@ -71,7 +72,10 @@ export function buildDrafts(qty, products, vendors) {
       product_id: pid, name_snapshot: lineName(p), qty: n,
       cost: Number(p.cost) > 0 ? p.cost : 0,
       price_tbd: !(Number(p.cost) > 0),   // ordered before we knew the price
-      kind: 'item', _packUnits: Number(p.packing_units) || 0,
+      kind: 'item',
+      base_cost: baseCost(p),
+      pack_units: packUnits(p),
+      packing_each: packingFor(p, vmap[p.vendor_id]),
       // one ordered unit can arrive as several inventory boxes, each worth a share
       split_boxes: Math.max(1, parseInt(p.split_boxes) || 1),
       per_box_cost: perBoxValue(p, vmap[p.vendor_id]),
@@ -81,13 +85,15 @@ export function buildDrafts(qty, products, vendors) {
     const v = vmap[vendorId];
     rawLines.sort((a, b) => a.name_snapshot.localeCompare(b.name_snapshot));
     const lines = rawLines.map(({ _packUnits, ...l }) => l);   // internal only, never persisted
-    const fee = packingLine(v, rawLines);
-    if (fee) lines.push(fee);
     return { vendor_id: vendorId, vendor_name: v.name, lines, ...poTotals(lines, v.tax_rate) };
   }).sort((a, b) => a.vendor_name.localeCompare(b.vendor_name));
 }
 
 /**
+ * DEPRECATED — packing is now charged on the line that earned it (see buildDrafts),
+ * because a lump sum at the bottom tells nobody what any single item really costs.
+ * Kept only so an older PO with a standalone fee line still renders.
+ *
  * Some vendors add a packing surcharge — Bingo Vision charges $4 per packed unit.
  *
  * How many units a box packs is a property of the PRODUCT, not of its type: a box

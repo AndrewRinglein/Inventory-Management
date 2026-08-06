@@ -63,22 +63,22 @@ test('buildDrafts groups by vendor, skips zero qty, locks prices', () => {
 const bvFee = { id: 'bv', name: 'Bingo Vision', email: 'bv@x.com', contact_name: 'Scott', tax_rate: 0.0975, packing_fee: 4, packing_types: 'flash' };
 const vendorsFee = [bvFee, { id: 'md', name: 'Marathon', email: 'md@x.com', tax_rate: 0.0975 }];
 
-test('Bingo Vision packs $4 per unit, and flash boxes hold one unit each', () => {
+test('packing rides on the line that earned it, not a lump at the bottom', () => {
   const [d] = buildDrafts({ P1: 2, P2: 3 }, products, vendorsFee);   // both bv flash, 1 unit each
-  const fee = d.lines.find((l) => l.kind === 'fee');
-  assert.ok(fee, 'packing line missing');
-  assert.equal(fee.qty, 5, '5 boxes x 1 unit');
-  assert.equal(fee.cost, 4);
-  assert.equal(fee.product_id, null, 'fee lines are not products');
-  assert.match(fee.name_snapshot, /Packing/);
+  assert.ok(!d.lines.some((l) => l.kind === 'fee'), 'no separate packing line any more');
+  for (const l of d.lines) assert.equal(l.packing_each, 4, 'each flash box carries its own $4');
+  assert.equal(d.subtotal, round2(2 * (117.3 + 4) + 3 * (230.5 + 4)));
 });
 
-test('a case that packs 80 units is charged 80 x $4', () => {
+test('a case that packs 80 units carries $320 on its own line', () => {
   const cases = [{ id: 'C80', vendor_id: 'bv', name: '10-Pack of strips Biker', cost: 5120,
-                   type: 'strip', price_per_ticket: 1, packing_units: 80 }];
+                   base_cost: 64, pack_units: 80, type: 'strip', price_per_ticket: 1, packing_units: 80 }];
   const [d] = buildDrafts({ C80: 1 }, cases, vendorsFee);
-  assert.equal(d.lines.find((l) => l.kind === 'fee').qty, 80);
-  assert.equal(d.subtotal, 5120 + 320);
+  const l = d.lines[0];
+  assert.equal(l.packing_each, 320, 'on the line, where a vendor can check it');
+  assert.equal(l.base_cost, 64);
+  assert.equal(l.pack_units, 80);
+  assert.equal(d.subtotal, 5440);
 });
 
 test('an ordinary strip carries no packing even from the charging vendor', () => {
@@ -89,14 +89,16 @@ test('an ordinary strip carries no packing even from the charging vendor', () =>
   assert.equal(d.subtotal, round2(64.6 * 3));
 });
 
-test('a mixed order charges only the units that carry packing', () => {
+test('a mixed order puts packing only on the lines that carry it', () => {
   const mix = [
     { id: 'F', vendor_id: 'bv', name: 'Pecker Heads', cost: 58.8, type: 'flash', price_per_ticket: 1, packing_units: 1 },
     { id: 'S', vendor_id: 'bv', name: 'Monopoly', cost: 64.6, type: 'strip', price_per_ticket: 1, packing_units: 0 },
     { id: 'C', vendor_id: 'bv', name: '10-Pack of strips', cost: 5120, type: 'strip', price_per_ticket: 1, packing_units: 80 },
   ];
   const [d] = buildDrafts({ F: 2, S: 4, C: 1 }, mix, vendorsFee);
-  assert.equal(d.lines.find((l) => l.kind === 'fee').qty, 82, '2 flash units + 80 case units, strips excluded');
+  const by = Object.fromEntries(d.lines.map((l) => [l.product_id, l.packing_each]));
+  assert.deepEqual(by, { F: 4, S: 0, C: 320 });
+  assert.equal(d.subtotal, round2(2 * 62.8 + 4 * 64.6 + 5440));
 });
 
 test('packing never applies to a vendor that does not charge it', () => {
@@ -514,8 +516,8 @@ test('poTotals ignores unpriced lines when computing tax', () => {
 test('the PO email prints ? and asks the vendor to fill the price in', () => {
   const [d] = buildDrafts({ A: 2, B: 3 }, TBD_PRODUCTS, TBD_VENDORS);
   const [e] = buildOrderEmails([{ ...d, num: 'SC-2026-08-BV-001' }], TBD_VENDORS, 'Santa Clara', '', '', { name: 'Sagit' });
-  assert.match(e.body, /New Game\s+\?\s+ea\s+=\s+\?/, 'both money columns read ? on that line');
-  assert.match(e.body, /\$100\.00 ea/, 'the priced line still shows its price');
+  assert.match(e.body, /New Game\s+\?\s+\?/, 'base and line total both read ? on that line');
+  assert.match(e.body, /\$100\.00/, 'the priced line still shows its price');
   assert.match(e.body, /Items below marked with a \? we don't have a current price\./);
   assert.match(e.body, /send over pricing, we will update and resend same PO/);
   assert.match(e.body, /covers the priced lines only/);
@@ -524,7 +526,7 @@ test('the PO email prints ? and asks the vendor to fill the price in', () => {
 test('a fully priced PO email says nothing about missing prices', () => {
   const [d] = buildDrafts({ A: 2 }, TBD_PRODUCTS, TBD_VENDORS);
   const [e] = buildOrderEmails([{ ...d, num: 'SC-2026-08-BV-002' }], TBD_VENDORS, 'Santa Clara', '', '', { name: 'Sagit' });
-  assert.ok(!/\?\s+ea/.test(e.body), 'no ? in the money column on a fully priced order');
+  assert.ok(!/\s\?\s*$/m.test(e.body), 'no ? in the money columns on a fully priced order');
   assert.ok(!e.body.includes("Items below marked with a ?"));
   assert.ok(!e.body.includes('covers the priced lines only'));
 });
@@ -729,4 +731,44 @@ test('ordering a splitting product creates one box per tote, not per case', () =
   assert.equal(line.qty * line.split_boxes, 32, 'which will become 32 totes in inventory');
   assert.equal(round2(line.qty * line.split_boxes * line.per_box_cost), 10880,
     'and the shelf value equals what the order landed at');
+});
+
+// ---- packing on the line, and the stock/packing split ----
+test('a PO line prints base, units, packing and its own total', () => {
+  const V = [{ id: 'bv', name: 'Bingo Vision', email: 'a@x.test', contact_name: 'Scott', tax_rate: 0.0975, packing_fee: 4 }];
+  const P = [
+    { id: 'C', vendor_id: 'bv', name: '10-Pack of strips Biker', type: 'strip',
+      base_cost: 64, pack_units: 80, packing_units: 80, cost: 5120, price_per_ticket: 1 },
+    { id: 'F', vendor_id: 'bv', name: 'Pecker Heads', type: 'flash',
+      base_cost: 58.8, pack_units: 1, packing_units: 1, cost: 58.8, price_per_ticket: 1 },
+  ];
+  const [d] = buildDrafts({ C: 1, F: 2 }, P, V);
+  const [e] = buildOrderEmails([{ ...d, num: 'N1' }], V, 'Redwood City', '', '', { name: 'Shelly' });
+
+  assert.match(e.body, /Base\s+Units\s+Packing\s+Line total/, 'a header naming the parts');
+  assert.match(e.body, /10-Pack of strips Biker\s+\$64\.00\s+x80\s+\$320\.00\s+\$5,440\.00/);
+  assert.match(e.body, /Pecker Heads\s+\$58\.80\s+\$4\.00\s+\$125\.60/, 'two boxes, packing included');
+  assert.ok(!/Packing — /.test(e.body), 'no lump-sum packing line any more');
+});
+
+test('the PO splits its subtotal into stock and packing', () => {
+  const V = [{ id: 'bv', name: 'Bingo Vision', email: 'a@x.test', contact_name: 'Scott', tax_rate: 0.0975, packing_fee: 4 }];
+  const P = [{ id: 'F', vendor_id: 'bv', name: 'Pecker Heads', type: 'flash',
+               base_cost: 58.8, pack_units: 1, packing_units: 1, cost: 58.8, price_per_ticket: 1 }];
+  const [d] = buildDrafts({ F: 10 }, P, V);
+  const [e] = buildOrderEmails([{ ...d, num: 'N2' }], V, 'Redwood City', '', '', { name: 'Shelly' });
+  assert.match(e.body, /Stock:\s+\$588\.00/);
+  assert.match(e.body, /Packing:\s+\$40\.00/);
+  assert.match(e.body, /Subtotal:\s+\$628\.00/);
+  assert.equal(d.subtotal, 628, 'and the totals agree with the maths');
+});
+
+test('an order with no packing shows no stock/packing split', () => {
+  const V = [{ id: 'md', name: 'Marathon', email: 'b@x.test', tax_rate: 0.0975, packing_fee: 0 }];
+  const P = [{ id: 'X', vendor_id: 'md', name: 'Lucky Kat', type: 'flash',
+               base_cost: 103, pack_units: 1, packing_units: 1, cost: 103, price_per_ticket: 1 }];
+  const [d] = buildDrafts({ X: 4 }, P, V);
+  const [e] = buildOrderEmails([{ ...d, num: 'N3' }], V, 'Santa Clara', '', '', { name: 'Sagit' });
+  assert.ok(!/Stock:/.test(e.body), 'nothing to split when the vendor charges no packing');
+  assert.match(e.body, /Subtotal:\s+\$412\.00/);
 });

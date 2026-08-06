@@ -122,15 +122,28 @@ export default function Review() {
                     <tr key={i}>
                       <td className="first">{l.name_snapshot}</td>
                       <td className="r mono">×{l.qty}</td>
+                      <td className="r mono dimmer" style={{ fontSize: 11 }}>
+                        {l.pack_units > 1 ? `${fmtMoney(l.base_cost)} ×${l.pack_units}` : ''}
+                      </td>
+                      <td className="r mono dimmer" style={{ fontSize: 11 }}>
+                        {l.packing_each > 0 ? fmtMoney(l.packing_each) : ''}
+                      </td>
                       <td className="r mono last">
-                        {l.price_tbd ? <span className="tbd" title="No price on our side — the vendor fills this in on their invoice">?</span> : fmtMoney(l.qty * l.cost)}
+                        {l.price_tbd ? <span className="tbd" title="No price on our side — the vendor fills this in on their invoice">?</span>
+                          : fmtMoney(l.qty * (l.cost + (l.packing_each || 0)))}
                       </td>
                     </tr>
                   ))}
-                  <tr><td className="first dim">Subtotal / Tax / Total</td><td />
+                  <tr><td className="first dim">Stock / Packing</td><td colSpan={2} />
+                    <td className="r mono last">
+                      {fmtMoney(d.lines.filter((l) => !l.price_tbd).reduce((a, l) => a + l.qty * l.cost, 0))}
+                      {' / '}
+                      {fmtMoney(d.lines.filter((l) => !l.price_tbd).reduce((a, l) => a + l.qty * (l.packing_each || 0), 0))}
+                    </td></tr>
+                  <tr><td className="first dim">Subtotal / Tax / Total</td><td colSpan={2} />
                     <td className="r mono last"><b>{fmtMoney(d.subtotal)} / {fmtMoney(d.tax)} / {fmtMoney(d.total)}</b></td></tr>
                   {d.partial && (
-                    <tr><td className="first" colSpan={3} style={{ fontSize: 11.5, color: 'var(--gold)' }}>
+                    <tr><td className="first" colSpan={5} style={{ fontSize: 11.5, color: 'var(--gold)' }}>
                       Plus {d.tbd} unpriced line{d.tbd === 1 ? '' : 's'} — this total is what we know, not the final bill.
                     </td></tr>
                   )}
