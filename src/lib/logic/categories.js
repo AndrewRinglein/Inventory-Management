@@ -9,7 +9,6 @@ export const GAME_TYPES = [
   { value: 'flash', label: 'Flash' },
   { value: 'strip', label: 'Strip' },
   { value: 'paper', label: 'Paper' },
-  { value: 'guarantee', label: 'Guarantee' },
   { value: 'supply', label: 'Supply' },
   { value: '_unset', label: 'Needs a type' },
 ];
@@ -18,7 +17,6 @@ export const GAME_TYPES = [
 export const REAL_TYPES = [
   { value: 'flash', label: 'flash' },
   { value: 'strip', label: 'strip' },
-  { value: 'guarantee', label: 'guarantee' },
   { value: 'paper', label: 'paper' },
   { value: 'supply', label: 'supply' },
 ];
