@@ -9,9 +9,13 @@ permissions:
   pages: write
   id-token: write
 
+# Pages allows one deployment at a time. cancel-in-progress would kill a build
+# that is already running whenever another push lands, so a run of quick commits
+# could leave the site stuck on an old bundle. Queue them instead — each push
+# still deploys, just in order.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
