@@ -1,6 +1,10 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
-import { fmtMoney } from '../lib/logic/po.js';
+import { fmtMoney, poFromRecord, repriceFromCatalog } from '../lib/logic/po.js';
+import { buildOrderEmails, senderFor, PO_TEXT_DEFAULTS } from '../lib/logic/emails.js';
+import { addressResolver } from '../lib/logic/halls.js';
+
+const HALL_NAMES = { sc: 'Santa Clara', rwc: 'Redwood City' };
 
 const STATUS = {
   draft: ['b-gray', 'Draft'],
@@ -16,13 +20,14 @@ const statusOf = (p) => (p.recorded_only && p.status === 'sent'
   : STATUS[p.status]);
 
 export default function Orders() {
-  const { hall, pos, allPos, boxes, vendors, store, reloadHall, setToast, setScreen, setReceivingPo, requirePin, can } = useContext(AppCtx);
+  const { hall, pos, allPos, boxes, vendors, products, settings, store, reloadHall, setToast, setScreen, setReceivingPo, requirePin, can } = useContext(AppCtx);
   const [sel, setSel] = useState(null);
   const [lines, setLines] = useState([]);
   const [emails, setEmails] = useState([]);
   const [confirmDel, setConfirmDel] = useState(false);
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState('active');   // active | archived
+  const [resend, setResend] = useState(null);  // { text:{}, reprice:bool, tab:'phone'|'text'|'edit' }
 
   const vmap = useMemo(() => Object.fromEntries(vendors.map((v) => [v.id, v])), [vendors]);
   const archived = (allPos || []).filter((p) => p.archived_at);
@@ -92,6 +97,47 @@ export default function Orders() {
     } finally { setBusy(false); }
   };
 
+  // ---- resend an email for a PO that already exists ----
+  //
+  // Rebuilt from the stored lines, not from the order builder, so what goes out is
+  // what this PO actually says. "Update prices first" is the other half of the note
+  // we send with unpriced lines: the vendor replies with their price, it goes into
+  // the catalog, and the same PO number goes back out with the figures filled in.
+  const vendorOf = (p) => vmap[p?.vendor_id] || {};
+  const repriced = useMemo(() => {
+    if (!resend || !cur || !lines.length) return null;
+    return repriceFromCatalog(cur, lines, products, vendorOf(cur));
+  }, [resend, cur, lines, products, vendors]);   // eslint-disable-line
+
+  const resendEmail = useMemo(() => {
+    if (!resend || !cur || !lines.length) return null;
+    const useLines = resend.reprice && repriced ? repriced.lines : lines;
+    const head = resend.reprice && repriced ? { ...cur, ...repriced.totals } : cur;
+    const rec = poFromRecord(head, useLines, products);
+    return buildOrderEmails([rec], vendors, HALL_NAMES[hall],
+      addressResolver(settings.halls_config, hall),
+      null, senderFor(settings.sender, hall),
+      { ...(settings.po_email || {}), ...resend.text })[0];
+  }, [resend, cur, lines, products, vendors, settings, hall, repriced]);   // eslint-disable-line
+
+  const doResend = async () => {
+    if (busy || !resendEmail) return;
+    setBusy(true);
+    try {
+      if (resend.reprice && repriced?.changes.length) {
+        await store.repricePo(cur.id, repriced.lines, repriced.totals);
+      }
+      await store.sendEmails([{ ...resendEmail, po_num: cur.num, kind: 'po' }], hall);
+      await reloadHall();
+      const fresh = await store.getPoLines(cur.id);
+      setLines(fresh);
+      setResend(null);
+      setToast(`${cur.num} sent again to ${vendorOf(cur).name}`, null, 6000);
+    } catch (e) {
+      setToast(e.message || 'Could not send that email', null, 8000);
+    } finally { setBusy(false); }
+  };
+
   return (
     <div>
       <div className="page-head">
@@ -158,6 +204,13 @@ export default function Orders() {
               )}
               {can('receive') && cur.status === 'partial' && (
                 <button className="btn ghost sm" onClick={closeShort}>Close short</button>
+              )}
+              {can('send') && (
+                <button className="btn ghost sm" disabled={busy || !lines.length}
+                  onClick={() => setResend({ text: {}, reprice: false, tab: 'phone' })}
+                  title="Send this PO to the distributor again — same number, same lines">
+                  ✉ Resend
+                </button>
               )}
               {can('order') && (
                 <button className="btn ghost sm" onClick={toggleArchive} disabled={busy}
@@ -234,6 +287,101 @@ export default function Orders() {
           </div>
         )}
       </div>
+
+      {resend && cur && resendEmail && (
+        <div className="modal-bg" onClick={() => !busy && setResend(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 760, maxWidth: '94vw' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>Resend {cur.num}</div>
+              <span className="dimmer" style={{ fontSize: 12 }}>to {vendorOf(cur).name} · {resendEmail.to}</span>
+              <div style={{ flex: 1 }} />
+              <div className="hall-switch" style={{ margin: 0 }}>
+                {['phone', 'text', 'edit'].map((t) => (
+                  <button key={t} className={resend.tab === t ? 'on' : ''} onClick={() => setResend({ ...resend, tab: t })}>
+                    {t === 'phone' ? 'Phone' : t === 'text' ? 'Text' : 'Edit wording'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="dimmer" style={{ fontSize: 12, margin: '0 0 10px' }}>
+              Same PO number, rebuilt from this order's own lines — nothing new is created and no stock moves.
+            </p>
+
+            {tbdLines > 0 && (
+              <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', background: '#fdf8ee',
+                border: '1px solid #e2c39a', borderRadius: 6, padding: '10px 12px', fontSize: 12.5, marginBottom: 10 }}>
+                <input type="checkbox" checked={resend.reprice} style={{ marginTop: 2 }}
+                  onChange={(e) => setResend({ ...resend, reprice: e.target.checked })} />
+                <span>
+                  <b>Update prices from the catalog first.</b>{' '}
+                  {repriced?.changes.length
+                    ? `${repriced.changes.length} line${repriced.changes.length === 1 ? '' : 's'} would change` +
+                      (resend.reprice ? ` — new total ${fmtMoney(repriced.totals.total)}, was ${fmtMoney(cur.total)}.` : '.')
+                    : 'Nothing has changed in the catalog since this went out.'}
+                  <div className="dimmer" style={{ marginTop: 3 }}>
+                    For when the distributor has sent the prices we were missing: enter them in Games, then resend
+                    the same PO with the figures filled in. This rewrites the order and its on-order boxes.
+                  </div>
+                </span>
+              </label>
+            )}
+
+            {resend.reprice && repriced?.changes.length > 0 && (
+              <div style={{ maxHeight: 120, overflow: 'auto', border: '1px solid var(--border-lt)', borderRadius: 6, marginBottom: 10 }}>
+                <table className="tbl"><tbody>
+                  {repriced.changes.map((c, i) => (
+                    <tr key={i}>
+                      <td className="first" style={{ fontSize: 12 }}>{c.name}</td>
+                      <td className="r mono dimmer" style={{ fontSize: 12 }}>{c.wasTbd ? '?' : fmtMoney(c.from)}</td>
+                      <td className="r mono last" style={{ fontSize: 12 }}>→ {c.nowTbd ? '?' : fmtMoney(c.to)}</td>
+                    </tr>
+                  ))}
+                </tbody></table>
+              </div>
+            )}
+
+            {resend.tab === 'edit' ? (
+              <div>
+                {[
+                  ['subject', 'Subject line', 1, `${'{hall}'} order — PO ${'{po}'}`],
+                  ['intro', 'Opening line', 2, PO_TEXT_DEFAULTS.intro],
+                  ['note', 'Extra paragraph', 3, 'e.g. Resending with the prices you sent over — everything else is unchanged.'],
+                  ['closing', 'Closing line', 2, PO_TEXT_DEFAULTS.closing],
+                ].map(([k, label, rows, ph]) => (
+                  <div className="field" key={k}>
+                    <label>{label}</label>
+                    {rows === 1
+                      ? <input type="text" value={resend.text[k] ?? ''} placeholder={ph} style={{ width: '100%' }}
+                          onChange={(e) => setResend({ ...resend, text: { ...resend.text, [k]: e.target.value } })} />
+                      : <textarea value={resend.text[k] ?? ''} placeholder={ph} rows={rows} style={{ width: '100%', resize: 'vertical' }}
+                          onChange={(e) => setResend({ ...resend, text: { ...resend.text, [k]: e.target.value } })} />}
+                  </div>
+                ))}
+              </div>
+            ) : resend.tab === 'phone' ? (
+              <div style={{ background: '#e9ebed', padding: 12, display: 'flex', justifyContent: 'center', borderRadius: 6 }}>
+                <iframe title="Phone preview" srcDoc={resendEmail.html}
+                  style={{ width: 390, height: 420, border: '1px solid var(--border)', borderRadius: 10, background: '#fff' }} />
+              </div>
+            ) : (
+              <textarea readOnly value={resendEmail.body}
+                style={{ width: '100%', height: 340, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11.5,
+                  padding: 12, background: '#fbfbfc', border: '1px solid var(--border-lt)', borderRadius: 6, resize: 'vertical' }} />
+            )}
+
+            <div style={{ display: 'flex', gap: 8, marginTop: 14, alignItems: 'center' }}>
+              <button className="btn primary" disabled={busy} onClick={doResend}>
+                {busy ? 'Sending…' : (resend.reprice && repriced?.changes.length ? 'Update prices and send' : 'Send again')}
+              </button>
+              <span className="dimmer" style={{ fontSize: 11.5 }}>
+                {emails.length} email{emails.length === 1 ? '' : 's'} already logged on this PO
+              </span>
+              <div style={{ flex: 1 }} />
+              <button className="btn ghost" disabled={busy} onClick={() => setResend(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {confirmDel && cur && (
         <div className="modal-bg" onClick={() => setConfirmDel(false)}>

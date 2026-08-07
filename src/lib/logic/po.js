@@ -119,3 +119,62 @@ export function packingLine(vendor, lines) {
     name_snapshot: `Packing — ${fmtMoney(fee)} per unit (${units} unit${units === 1 ? '' : 's'})`,
   };
 }
+
+/**
+ * Rebuild a sent PO into the shape the email templates expect, so it can be
+ * printed again months later.
+ *
+ * The line is the source of truth — it holds what the vendor was actually quoted.
+ * The catalog is only consulted for parts a line predates (POs written before
+ * base_cost / pack_units were kept on the line), and never to overwrite them:
+ * a reprint that quietly showed today's price instead of the sent price would be
+ * worse than no reprint at all.
+ */
+export function poFromRecord(po, lines, products) {
+  const pmap = Object.fromEntries(products.map((p) => [p.id, p]));
+  return {
+    ...po,
+    lines: lines.map((l) => {
+      const p = pmap[l.product_id] || {};
+      return {
+        ...l,
+        base_cost: l.base_cost != null ? Number(l.base_cost) : (Number(p.base_cost) || Number(l.cost) || 0),
+        pack_units: l.pack_units != null ? Number(l.pack_units) : (Number(p.pack_units) || 1),
+        packing_each: Number(l.packing_each) || 0,
+        cost: Number(l.cost) || 0,
+        qty: Number(l.qty) || 0,
+      };
+    }),
+  };
+}
+
+/**
+ * Re-quote a PO from today's catalog. For the case the "?" note describes: the
+ * vendor sends prices for the lines we had none for, those go into the catalog,
+ * and the same PO number goes back out with the figures filled in.
+ *
+ * Returns the new lines and totals plus what changed, so the change can be shown
+ * before anything is written.
+ */
+export function repriceFromCatalog(po, lines, products, vendor) {
+  const pmap = Object.fromEntries(products.map((p) => [p.id, p]));
+  const changes = [];
+  const next = lines.map((l) => {
+    const p = pmap[l.product_id];
+    if (!p || l.kind === 'fee') return { ...l };
+    const base = baseCost(p);
+    const units = packUnits(p);
+    const cost = round2(base * units);
+    const packing = packingFor(p, vendor);
+    const tbd = !(cost > 0);
+    if (round2(Number(l.cost) || 0) !== cost || (Number(l.packing_each) || 0) !== packing) {
+      changes.push({
+        name: l.name_snapshot,
+        from: Number(l.cost) || 0, to: cost,
+        wasTbd: !!l.price_tbd, nowTbd: tbd,
+      });
+    }
+    return { ...l, base_cost: base, pack_units: units, cost, packing_each: packing, price_tbd: tbd };
+  });
+  return { lines: next, totals: poTotals(next, vendor?.tax_rate || 0), changes };
+}

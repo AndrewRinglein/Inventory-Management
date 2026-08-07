@@ -89,9 +89,10 @@ export class SupabaseStore {
         sent_at: when, created_at: when,
         recorded_only: recordedOnly, vendor_ref: vendorRef || null,
       }).select().single());
-      // split_boxes / per_box_cost are how the boxes get built, not part of the PO record
+      // per_box_cost is derived at receiving time; the price parts are kept so this
+      // PO can be reprinted years later exactly as the vendor received it
       ok(await this.sb.from('po_lines').insert(
-        d.lines.map(({ split_boxes, per_box_cost, base_cost, pack_units, ...l }) => ({ po_id: po.id, ...l }))));
+        d.lines.map(({ per_box_cost, ...l }) => ({ po_id: po.id, ...l }))));
       // fee lines (packing charges) are not physical goods — no boxes for them.
       // One ordered unit can become several inventory boxes (a case of totes), each
       // carrying its share of the landed cost.
@@ -115,6 +116,32 @@ export class SupabaseStore {
   async getPos(hallId) { return fetchAll(() => this.sb.from('purchase_orders').select('*').eq('hall_id', hallId).order('created_at', { ascending: false })); }
   async getPoLines(poId) { return fetchAll(() => this.sb.from('po_lines').select('*').eq('po_id', poId)); }
   async setPoStatus(poId, status) { ok(await this.sb.from('purchase_orders').update({ status }).eq('id', poId)); }
+
+  /** Write re-quoted lines and totals back onto an existing PO, keeping its number. */
+  async repricePo(poId, lines, totals) {
+    for (const l of lines) {
+      ok(await this.sb.from('po_lines').update({
+        cost: l.cost, base_cost: l.base_cost, pack_units: l.pack_units,
+        packing_each: l.packing_each, price_tbd: !!l.price_tbd,
+      }).eq('id', l.id));
+    }
+    const po = ok(await this.sb.from('purchase_orders').update({
+      subtotal: totals.subtotal, tax: totals.tax, total: totals.total,
+      price_tbd_lines: lines.filter((l) => l.price_tbd).length,
+    }).eq('id', poId).select().single());
+    // boxes still on order carry the old price; bring them along
+    for (const l of lines) {
+      if (!l.product_id || l.kind === 'fee') continue;
+      const per = l.split_boxes > 1 ? Math.round((l.cost / l.split_boxes) * 100) / 100 : l.cost;
+      ok(await this.sb.from('boxes').update({ cost: per, price_tbd: !!l.price_tbd })
+        .eq('po_id', poId).eq('product_id', l.product_id).eq('state', 'on_order'));
+    }
+    await this.logEvent('po.reprice', 'purchase_orders', po.num, {
+      label: `${po.hall_id === 'sc' ? 'Santa Clara' : 'Redwood City'} — repriced PO ${po.num} to ${totals.total}`,
+      total: po.total,
+    });
+    return po;
+  }
 
   /** Archive (or restore) a PO. Nothing is destroyed — it just leaves the working views. */
   async setPoArchived(poId, archived) {

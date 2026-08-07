@@ -104,7 +104,8 @@ export class DemoStore {
       };
       this.db.purchase_orders.push(po);
       for (const l of d.lines) {
-        const { split_boxes, per_box_cost, base_cost, pack_units, ...rec } = l;
+        const { per_box_cost, ...rec } = l;
+        const split_boxes = l.split_boxes;
         this.db.po_lines.push({ id: uid(), po_id: po.id, ...rec });
         if (l.kind === 'fee' || !l.product_id) continue;   // packing charge: no boxes
         for (let i = 0; i < l.qty * (split_boxes || 1); i++) {
@@ -130,6 +131,33 @@ export class DemoStore {
     po.status = status;
     this._event('update', 'purchase_orders', po.num, { status });
     this._save();
+  }
+
+  async repricePo(poId, lines, totals) {
+    for (const l of lines) {
+      const row = this.db.po_lines.find((x) => x.id === l.id);
+      if (row) Object.assign(row, {
+        cost: l.cost, base_cost: l.base_cost, pack_units: l.pack_units,
+        packing_each: l.packing_each, price_tbd: !!l.price_tbd,
+      });
+    }
+    const po = this.db.purchase_orders.find((p) => p.id === poId);
+    Object.assign(po, {
+      subtotal: totals.subtotal, tax: totals.tax, total: totals.total,
+      price_tbd_lines: lines.filter((l) => l.price_tbd).length,
+    });
+    for (const l of lines) {
+      if (!l.product_id || l.kind === 'fee') continue;
+      const per = l.split_boxes > 1 ? Math.round((l.cost / l.split_boxes) * 100) / 100 : l.cost;
+      for (const b of this.db.boxes) {
+        if (b.po_id === poId && b.product_id === l.product_id && b.state === 'on_order') {
+          b.cost = per; b.price_tbd = !!l.price_tbd;
+        }
+      }
+    }
+    this._event('po.reprice', 'purchase_orders', po.num, { label: `Repriced PO ${po.num}`, total: po.total });
+    this._save();
+    return po;
   }
 
   async setPoArchived(poId, archived) {
