@@ -1,7 +1,7 @@
 import React, { useContext, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
 import { buildDrafts, nextPoNum, fmtMoney } from '../lib/logic/po.js';
-import { buildOrderEmails, senderFor } from '../lib/logic/emails.js';
+import { buildOrderEmails, senderFor, PO_TEXT_DEFAULTS } from '../lib/logic/emails.js';
 import { addressResolver } from '../lib/logic/halls.js';
 
 const HALL_NAMES = { sc: 'Santa Clara', rwc: 'Redwood City' };
@@ -30,6 +30,26 @@ export default function Review() {
   const hallAddress = addressResolver(settings.halls_config, hall);
   const accounting = emailCfg.accountingAddress || '(accounting address not set — Settings)';
 
+  // Per-email wording for THIS send, layered over the Settings defaults. Editing a
+  // field rebuilds both the laid-out and plain-text versions from the same source,
+  // so they can't drift apart — which is what made an edited PO fall back to plain
+  // text and lose its column alignment in clients that use a proportional font.
+  const TEXT_KEYS = ['subject', 'intro', 'tbdNote', 'note', 'closing'];
+  const textFor = (i) => {
+    const merged = { ...(settings.po_email || {}) };
+    const e = edits[i] || {};
+    for (const k of TEXT_KEYS) if (e[k] != null) merged[k] = e[k];
+    return merged;
+  };
+  const buildFor = (numbered) => numbered.map((d, i) => {
+    const e = buildOrderEmails([d], vendors, hallName, hallAddress, accounting,
+      senderFor(settings.sender, hall), textFor(i))[0];
+    // the raw-text escape hatch: whatever they typed wins, and the email goes
+    // text-only because there is no way to reflect free text into the HTML
+    const raw = edits[i]?.rawBody;
+    return raw != null ? { ...e, body: raw, html: undefined } : e;
+  });
+
   const emails = useMemo(() => {
     // numbering preview only; real numbers assigned at send
     let seq = { ...(settings.po_sequence || {}) };
@@ -38,14 +58,11 @@ export default function Review() {
       seq = r.seq;
       return { ...d, num: r.num, sent_at: new Date().toISOString() };
     });
-    return { numbered, list: buildOrderEmails(numbered, vendors, hallName, hallAddress, accounting, senderFor(settings.sender, hall), settings.po_email) };
-  }, [drafts, settings, hall, vendors]);   // eslint-disable-line
+    return { numbered, list: buildFor(numbered) };
+  }, [drafts, settings, hall, vendors, edits]);   // eslint-disable-line
 
-  const view = (i) => {
-    const e = emails.list[i];
-    return e ? { ...e, ...(edits[i] || {}) } : null;
-  };
-  const cur = view(Math.min(emailIdx, emails.list.length - 1));
+  const cur = emails.list[Math.min(emailIdx, emails.list.length - 1)] || null;
+  const setField = (k, v) => setEdits({ ...edits, [emailIdx]: { ...(edits[emailIdx] || {}), [k]: v } });
 
   // A yyyy-mm-dd from a date input is midnight UTC, which lands on the previous
   // day west of Greenwich — a PO recorded as July 1 would file itself under June.
@@ -95,17 +112,7 @@ export default function Review() {
         return;
       }
 
-      const finalEmails = buildOrderEmails(
-        numbered.map((d, i) => ({ ...d, sent_at: pos[i]?.sent_at })),
-        vendors, hallName, hallAddress, accounting, senderFor(settings.sender, hall), settings.po_email
-      // If someone rewrote the text by hand, the generated HTML no longer says the
-      // same thing — send text only rather than two versions that disagree.
-      ).map((e, i) => {
-        const ed = edits[i] || {};
-        const merged = { ...e, ...ed };
-        if (ed.body != null && ed.body !== e.body) delete merged.html;
-        return merged;
-      });
+      const finalEmails = buildFor(numbered.map((d, i) => ({ ...d, sent_at: pos[i]?.sent_at })));
       await store.sendEmails(finalEmails, hall);
       setToast(IS_DEMO
         ? `${pos.length} PO(s) created; ${finalEmails.length} emails logged (demo — not sent)`
@@ -219,34 +226,75 @@ export default function Review() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <div><b>To:</b> {cur.to}</div>
                   <div style={{ flex: 1 }} />
-                  {cur.html && (
-                    <div className="hall-switch" style={{ margin: 0 }}>
-                      <button className={preview === 'phone' ? 'on' : ''} onClick={() => setPreview('phone')}
-                        title="How it looks on a phone">Phone</button>
-                      <button className={preview === 'text' ? 'on' : ''} onClick={() => setPreview('text')}
-                        title="The plain-text version, and the only one you can edit">Text</button>
+                  <div className="hall-switch" style={{ margin: 0 }}>
+                    {['phone', 'text', 'edit'].map((t) => (
+                      <button key={t} className={preview === t ? 'on' : ''} onClick={() => setPreview(t)}
+                        title={t === 'phone' ? 'How it looks on a phone'
+                          : t === 'text' ? 'The plain-text version, for clients that show no formatting'
+                          : 'Change the wording on this one email'}>
+                        {t === 'phone' ? 'Phone' : t === 'text' ? 'Text' : 'Edit wording'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="mono dimmer" style={{ fontSize: 12, marginTop: 4 }}>{cur.subject}</div>
+              </div>
+
+              {preview === 'edit' ? (
+                <div style={{ padding: 14 }}>
+                  <p className="dimmer" style={{ fontSize: 12, margin: '0 0 12px' }}>
+                    Changes here apply to <b>this email only</b> and rebuild both versions, so the phone
+                    layout stays. Blank uses the standard wording (shown greyed). To change every future PO
+                    instead, use Settings → PO email wording.
+                  </p>
+                  {[
+                    ['subject', 'Subject line', 1, `${'{hall}'} order — PO ${'{po}'}`],
+                    ['intro', 'Opening line', 2, PO_TEXT_DEFAULTS.intro],
+                    ['note', 'Extra paragraph', 3, 'Anything specific to this order — delivery timing, a substitution, a question'],
+                    ['closing', 'Closing line', 3, PO_TEXT_DEFAULTS.closing],
+                  ].map(([k, label, rows, ph]) => (
+                    <div className="field" key={k}>
+                      <label>{label}</label>
+                      {rows === 1
+                        ? <input type="text" value={(edits[emailIdx] || {})[k] ?? ''} placeholder={ph}
+                            style={{ width: '100%' }} onChange={(e) => setField(k, e.target.value)} />
+                        : <textarea value={(edits[emailIdx] || {})[k] ?? ''} placeholder={ph} rows={rows}
+                            style={{ width: '100%', resize: 'vertical' }} onChange={(e) => setField(k, e.target.value)} />}
                     </div>
+                  ))}
+                  <div className="dimmer" style={{ fontSize: 11.5, marginTop: 10 }}>
+                    {'{hall}'} {'{po}'} {'{vendor}'} {'{date}'} fill in automatically. The item table and totals
+                    are always generated — they have to match the order.
+                  </div>
+                  {edits[emailIdx]?.rawBody == null ? (
+                    <button className="btn ghost sm" style={{ marginTop: 12 }}
+                      onClick={() => setField('rawBody', cur.body)}
+                      title="Type the whole email yourself — the phone layout is lost">
+                      Write the whole email by hand instead…
+                    </button>
+                  ) : (
+                    <button className="btn ghost sm" style={{ marginTop: 12 }} onClick={() => setField('rawBody', null)}>
+                      ← Back to the generated email
+                    </button>
                   )}
                 </div>
-                <input className="cell" style={{ fontWeight: 600, width: '100%' }} value={cur.subject}
-                  onChange={(e) => setEdits({ ...edits, [emailIdx]: { ...(edits[emailIdx] || {}), subject: e.target.value } })} />
-              </div>
-              {cur.html && preview === 'phone' ? (
+              ) : preview === 'phone' && cur.html ? (
                 <div style={{ background: '#e9ebed', padding: 14, display: 'flex', justifyContent: 'center' }}>
                   <iframe title="Phone preview" srcDoc={cur.html}
                     style={{ width: 390, height: 560, border: '1px solid var(--border)', borderRadius: 10, background: '#fff' }} />
                 </div>
               ) : (
-                <textarea style={{ width: '100%', border: 'none', minHeight: 340, fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, padding: 14, resize: 'vertical' }}
+                <textarea readOnly={edits[emailIdx]?.rawBody == null}
+                  style={{ width: '100%', border: 'none', minHeight: 340, fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, padding: 14, resize: 'vertical', background: edits[emailIdx]?.rawBody == null ? '#fbfbfc' : '#fff' }}
                   value={cur.body}
-                  onChange={(e) => setEdits({ ...edits, [emailIdx]: { ...(edits[emailIdx] || {}), body: e.target.value } })} />
+                  onChange={(e) => setField('rawBody', e.target.value)} />
               )}
-              {cur.html && (
-                <div className="dimmer" style={{ fontSize: 11.5, padding: '8px 14px', borderTop: '1px solid var(--border-lt)' }}>
-                  Both versions go in the same email — phones and most clients show the laid-out one,
-                  anything plain-text-only falls back to the Text tab. Editing the text sends that version alone.
-                </div>
-              )}
+
+              <div className="dimmer" style={{ fontSize: 11.5, padding: '8px 14px', borderTop: '1px solid var(--border-lt)' }}>
+                {cur.html
+                  ? 'Both versions go in the same email — phones and most clients show the laid-out one, anything plain-text-only falls back to the Text tab.'
+                  : "Hand-written: this one sends as plain text only. Mail clients that use a proportional font won't keep the columns lined up."}
+              </div>
             </div>
           )}
         </div>
