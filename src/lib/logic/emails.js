@@ -79,10 +79,14 @@ function lineRow(l, w) {
   ].join('');
 }
 
+// "Unit" is what gets ordered and invoiced — a box, a set, a case. "Deals" is how
+// many priceable pieces are inside one unit, which is what the base price is quoted
+// against. A dauber is $19 per deal, 1 deal per unit; a Biker case is $64.60 per
+// deal, 80 deals per unit. Both sides of an invoice mean the same thing by these.
 function lineHeader(w) {
   return [
-    ' Qty', '   ', 'Item'.padEnd(w.name),
-    'Base'.padStart(w.base), 'Units'.padStart(w.units),
+    'Unit', '   ', 'Item'.padEnd(w.name),
+    'Base'.padStart(w.base), 'Deals'.padStart(w.units),
     'Packing'.padStart(w.pack), 'Line total'.padStart(w.total),
   ].join('');
 }
@@ -95,7 +99,27 @@ function widths(lines) {
   };
 }
 
-function poBody(po, vendor, hallName, hallAddress, sender) {
+/**
+ * Wording on the PO that a person may want to change without a code push.
+ * Settings → PO email overrides any of these; blank falls back to the default.
+ * `note` is extra wording that only appears if it has been written.
+ */
+export const PO_TEXT_DEFAULTS = {
+  intro: `Here's our next order for {hall}. Purchase order number is {po}.`,
+  tbdNote: `Items below marked with a ? we don't have a current price. If you could send over pricing, we will update and resend same PO with those details.`,
+  note: ``,
+  closing: `Could you confirm you got this and let me know when it should arrive? Please put {po} on the invoice so we can match it up when it lands.`,
+};
+
+const fill = (tpl, vars) => String(tpl || '').replace(/\{(\w+)\}/g, (m, k) => (vars[k] ?? m));
+
+/** Chosen text for one field: a non-blank override, else the default. */
+const pick = (text, key) => {
+  const v = (text?.[key] ?? '').trim();
+  return v || PO_TEXT_DEFAULTS[key];
+};
+
+function poBody(po, vendor, hallName, hallAddress, sender, text = {}) {
   // hallAddress may be a plain string or a resolver, because a hall can send
   // different vendors to different doors (see logic/halls.js)
   const address = typeof hallAddress === 'function' ? hallAddress(vendor.id) : hallAddress;
@@ -109,12 +133,16 @@ function poBody(po, vendor, hallName, hallAddress, sender) {
   const priced = po.lines.filter((l) => !l.price_tbd);
   const goodsTotal = priced.reduce((a, l) => a + l.qty * Number(l.cost), 0);
   const packingTotal = priced.reduce((a, l) => a + l.qty * (Number(l.packing_each) || 0), 0);
+  const vars = { hall: hallName, po: po.num, vendor: vendor.name, date };
+  const extra = (text?.note ?? '').trim();
   return [
     greet(vendor.contact_name),
     ``,
-    `Here's our next order for ${hallName}. Purchase order number is ${po.num}.`,
+    fill(pick(text, 'intro'), vars),
     n ? `` : null,
-    n ? `Items below marked with a ? we don't have a current price. If you could send over pricing, we will update and resend same PO with those details.` : null,
+    n ? fill(pick(text, 'tbdNote'), vars) : null,
+    extra ? `` : null,
+    extra ? fill(extra, vars) : null,
     ``,
     lineHeader(w),
     '-'.repeat(4 + 3 + w.name + w.base + w.units + w.pack + w.total),
@@ -131,7 +159,7 @@ function poBody(po, vendor, hallName, hallAddress, sender) {
     anyPacking ? `  Packing is included in each line above, not added separately.` : null,
     ``,
     address ? `Please deliver to:\n${address}\n` : null,
-    `Could you confirm you got this and let me know when it should arrive? Please put ${po.num} on the invoice so we can match it up when it lands.`,
+    fill(pick(text, 'closing'), vars),
     `Ordered ${date}.`,
     ...signature(sender, hallName),
   ].filter((l) => l !== null).join('\n');
@@ -143,15 +171,18 @@ function poBody(po, vendor, hallName, hallAddress, sender) {
  * receiving time, which states what to actually pay. The CC address (Settings) still gets
  * a copy of everything for oversight.
  */
-export function buildOrderEmails(pos, vendors, hallName, hallAddress, _accountingAddress, sender = {}) {
+export function buildOrderEmails(pos, vendors, hallName, hallAddress, _accountingAddress, sender = {}, text = {}) {
   const vmap = Object.fromEntries(vendors.map((v) => [v.id, v]));
   const out = [];
   for (const po of pos) {
     const v = vmap[po.vendor_id];
+    const subject = (text?.subject ?? '').trim();
     out.push({
       kind: 'po', po_num: po.num, to: v.email,
-      subject: `${hallName} order — PO ${po.num}`,
-      body: poBody(po, v, hallName, hallAddress, sender),
+      subject: subject
+        ? fill(subject, { hall: hallName, po: po.num, vendor: v.name })
+        : `${hallName} order — PO ${po.num}`,
+      body: poBody(po, v, hallName, hallAddress, sender, text),
     });
   }
   return out;

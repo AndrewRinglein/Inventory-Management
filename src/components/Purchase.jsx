@@ -170,13 +170,13 @@ export default function Purchase() {
             <th className="r sortable" style={{ width: 74 }} onClick={() => sortBy('price')}>$ / tkt{arrow('price')}</th>
             <th className="sortable" style={{ width: 150 }} onClick={() => sortBy('vendor')}>Vendor{arrow('vendor')}</th>
             <th className="sortable" style={{ width: 88 }} onClick={() => sortBy('type')}>Type{arrow('type')}</th>
-            <th className="r sortable" style={{ width: 92 }} onClick={() => sortBy('base')} title="What one unit costs">Base ${arrow('base')}</th>
-            <th className="r sortable" style={{ width: 48 }} onClick={() => sortBy('units')} title="Units per ordered box">×{arrow('units')}</th>
-            <th className="r sortable" style={{ width: 86 }} onClick={() => sortBy('packing')} title="Packing on one ordered box">Packing{arrow('packing')}</th>
-            <th className="r sortable" style={{ width: 106 }} onClick={() => sortBy('cost')} title="Base × units + packing">Box total{arrow('cost')}</th>
+            <th className="r sortable" style={{ width: 92 }} onClick={() => sortBy('base')} title="What one deal costs">Base ${arrow('base')}</th>
+            <th className="r sortable" style={{ width: 62 }} onClick={() => sortBy('units')} title="Deals inside one ordered unit — what the base price is quoted against">Deals{arrow('units')}</th>
+            <th className="r sortable" style={{ width: 86 }} onClick={() => sortBy('packing')} title="Packing on one ordered unit">Packing{arrow('packing')}</th>
+            <th className="r sortable" style={{ width: 106 }} onClick={() => sortBy('cost')} title="Base × deals + packing">Unit total{arrow('cost')}</th>
             <th className="r sortable" style={{ width: 66 }} onClick={() => sortBy('live')}>Live{arrow('live')}</th>
             <th className="r sortable" style={{ width: 78 }} onClick={() => sortBy('onorder')}>On order{arrow('onorder')}</th>
-            <th style={{ textAlign: 'center', width: 96 }}>Order qty</th>
+            <th style={{ textAlign: 'center', width: 96 }}>Units</th>
             <th className="r last" style={{ width: 118 }}>Line total</th>
           </tr></thead>
           <tbody>

@@ -175,8 +175,8 @@ export default function Orders() {
             </div>
             <table className="tbl">
               <thead><tr>
-                <th className="first">Item</th><th className="r">Qty</th>
-                <th className="r">Unit</th><th className="r">Line total</th><th className="last">Received</th>
+                <th className="first">Item</th><th className="r">Units</th>
+                <th className="r">Per unit</th><th className="r">Line total</th><th className="last">Received</th>
               </tr></thead>
               <tbody>
                 {lines.map((l) => {

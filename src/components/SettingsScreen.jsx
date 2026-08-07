@@ -1,6 +1,7 @@
 import React, { useContext, useEffect, useState } from 'react';
 import { AppCtx } from '../App.jsx';
 import { deliveryAddress, setVendorAddress, overriddenVendors } from '../lib/logic/halls.js';
+import { PO_TEXT_DEFAULTS } from '../lib/logic/emails.js';
 
 export default function SettingsScreen() {
   const { settings, vendors, store, reloadSettings, reloadCatalog, setToast, requirePin, IS_DEMO, hall, boxes, pos, payments, products, can } = useContext(AppCtx);
@@ -13,6 +14,7 @@ export default function SettingsScreen() {
   const [sender, setSender] = useState(null);
   const [senderHall, setSenderHall] = useState('sc');
   const [addrHall, setAddrHall] = useState(null);   // which hall's per-vendor list is open
+  const [poText, setPoText] = useState(null);       // wording overrides for the PO email
 
   useEffect(() => {
     (async () => { setUnlocked(await requirePin()); })();
@@ -28,15 +30,17 @@ export default function SettingsScreen() {
     setSender((raw.name || raw.org)
       ? { sc: { ...blank, ...raw }, rwc: { ...blank, ...raw } }
       : { sc: { ...blank, ...(raw.sc || {}) }, rwc: { ...blank, ...(raw.rwc || {}) } });
+    setPoText({ subject: '', intro: '', tbdNote: '', note: '', closing: '', ...(settings.po_email || {}) });
   }, [settings, vendors]);
 
   if (!unlocked) return <div className="card pad dimmer">Settings are PIN-protected.</div>;
-  if (!email || !halls || !vend || !sender) return null;
+  if (!email || !halls || !vend || !sender || !poText) return null;
 
   const save = async () => {
     await store.setSetting('email', email);
     await store.setSetting('halls_config', halls);
     await store.setSetting('sender', sender);
+    await store.setSetting('po_email', poText);
     for (const v of vendors) {
       const next = vend[v.id];
       if ((v.email || '') !== next.email || (v.contact_name || '') !== next.contact_name) {
@@ -176,6 +180,33 @@ export default function SettingsScreen() {
                   </div>
                 );
               })}
+            </div>
+          </div>
+          <div className="card pad" style={{ marginBottom: 14 }}>
+            <b style={{ fontSize: 13.5 }}>PO email wording</b>
+            <p className="muted-note" style={{ marginTop: 4 }}>
+              Leave a box empty to use the standard wording shown as its placeholder.
+              You can use <span className="mono">{'{hall}'}</span>, <span className="mono">{'{po}'}</span>,{' '}
+              <span className="mono">{'{vendor}'}</span> and <span className="mono">{'{date}'}</span> anywhere —
+              they get filled in per order. The table of items, the totals and the signature aren't editable here;
+              you can still tweak any individual email on the Review screen before sending.
+            </p>
+            <div style={{ marginTop: 10 }}>
+              {[
+                ['subject', 'Subject line', 1, `${'{hall}'} order — PO ${'{po}'}`],
+                ['intro', 'Opening line', 2, PO_TEXT_DEFAULTS.intro],
+                ['tbdNote', 'Note when prices are missing', 3, PO_TEXT_DEFAULTS.tbdNote],
+                ['note', 'Extra paragraph (only appears if filled in)', 3, 'e.g. standing delivery instructions, or a note about a promotion'],
+                ['closing', 'Closing line', 3, PO_TEXT_DEFAULTS.closing],
+              ].map(([key, label, rows, ph]) => (
+                <Row key={key} label={label}>
+                  {rows === 1
+                    ? <input type="text" value={poText[key]} placeholder={ph} style={{ width: '100%' }}
+                        onChange={(e) => setPoText({ ...poText, [key]: e.target.value })} />
+                    : <textarea value={poText[key]} placeholder={ph} rows={rows} style={{ width: '100%', resize: 'vertical' }}
+                        onChange={(e) => setPoText({ ...poText, [key]: e.target.value })} />}
+                </Row>
+              ))}
             </div>
           </div>
           <div className="card pad" style={{ marginBottom: 14 }}>
