@@ -107,14 +107,30 @@ export default function App() {
     if (pinOkRef.current) return Promise.resolve(true);
     return new Promise((resolve) => setPinAsk({ resolve }));
   }, []);
-  const answerPin = useCallback((pin) => {
-    const want = settings.admin_pin?.pin ?? '1234';
-    const ok = pin === want;
+  // Check the PIN against the stored value, read fresh at the moment of asking.
+  //
+  // It used to compare against the copy loaded into React state at sign-in, which
+  // meant changing the PIN didn't take effect until everyone reloaded — the new one
+  // was rejected and the old one still worked. Worse, a settings read that came back
+  // empty fell through to '1234', so a hiccup silently restored the factory PIN.
+  // Now: a failed read refuses rather than guessing, and '1234' applies only when no
+  // PIN has ever been set.
+  const answerPin = useCallback(async (pin) => {
+    if (pin === null) { pinAsk?.resolve(false); setPinAsk(null); return; }
+    let want;
+    try {
+      want = (await store.getSetting('admin_pin'))?.pin;
+    } catch {
+      setToast('Could not check the PIN — check your connection and try again', null, 6000);
+      pinAsk?.resolve(false); setPinAsk(null); return;
+    }
+    if (want == null || want === '') want = '1234';   // never configured
+    const ok = String(pin).trim() === String(want).trim();
     if (ok) pinOkRef.current = true;
     pinAsk?.resolve(ok);
     setPinAsk(null);
-    if (!ok && pin !== null) setToast('Wrong PIN');
-  }, [pinAsk, settings, setToast]);
+    if (!ok) setToast('Wrong PIN');
+  }, [pinAsk, setToast]);
 
   // ---- scanner ----
   const scanCtxRef = useRef({});
