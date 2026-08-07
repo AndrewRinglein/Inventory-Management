@@ -14,6 +14,7 @@ export default function Review() {
   const [recording, setRecording] = useState(false);          // the "record only" dialog
   const [placedOn, setPlacedOn] = useState(() => new Date().toISOString().slice(0, 10));
   const [vendorRef, setVendorRef] = useState('');
+  const [preview, setPreview] = useState('phone');   // phone | text
 
   const drafts = useMemo(() => buildDrafts(orderQty, products, vendors), [orderQty, products, vendors]);
   const totalTbd = drafts.reduce((a, d) => a + (d.tbd || 0), 0);
@@ -97,7 +98,14 @@ export default function Review() {
       const finalEmails = buildOrderEmails(
         numbered.map((d, i) => ({ ...d, sent_at: pos[i]?.sent_at })),
         vendors, hallName, hallAddress, accounting, senderFor(settings.sender, hall), settings.po_email
-      ).map((e, i) => ({ ...e, ...(edits[i] || {}) }));
+      // If someone rewrote the text by hand, the generated HTML no longer says the
+      // same thing — send text only rather than two versions that disagree.
+      ).map((e, i) => {
+        const ed = edits[i] || {};
+        const merged = { ...e, ...ed };
+        if (ed.body != null && ed.body !== e.body) delete merged.html;
+        return merged;
+      });
       await store.sendEmails(finalEmails, hall);
       setToast(IS_DEMO
         ? `${pos.length} PO(s) created; ${finalEmails.length} emails logged (demo — not sent)`
@@ -208,13 +216,37 @@ export default function Review() {
           {cur && (
             <div className="email-preview">
               <div className="hd">
-                <div><b>To:</b> {cur.to}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div><b>To:</b> {cur.to}</div>
+                  <div style={{ flex: 1 }} />
+                  {cur.html && (
+                    <div className="hall-switch" style={{ margin: 0 }}>
+                      <button className={preview === 'phone' ? 'on' : ''} onClick={() => setPreview('phone')}
+                        title="How it looks on a phone">Phone</button>
+                      <button className={preview === 'text' ? 'on' : ''} onClick={() => setPreview('text')}
+                        title="The plain-text version, and the only one you can edit">Text</button>
+                    </div>
+                  )}
+                </div>
                 <input className="cell" style={{ fontWeight: 600, width: '100%' }} value={cur.subject}
                   onChange={(e) => setEdits({ ...edits, [emailIdx]: { ...(edits[emailIdx] || {}), subject: e.target.value } })} />
               </div>
-              <textarea style={{ width: '100%', border: 'none', minHeight: 340, fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, padding: 14, resize: 'vertical' }}
-                value={cur.body}
-                onChange={(e) => setEdits({ ...edits, [emailIdx]: { ...(edits[emailIdx] || {}), body: e.target.value } })} />
+              {cur.html && preview === 'phone' ? (
+                <div style={{ background: '#e9ebed', padding: 14, display: 'flex', justifyContent: 'center' }}>
+                  <iframe title="Phone preview" srcDoc={cur.html}
+                    style={{ width: 390, height: 560, border: '1px solid var(--border)', borderRadius: 10, background: '#fff' }} />
+                </div>
+              ) : (
+                <textarea style={{ width: '100%', border: 'none', minHeight: 340, fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, padding: 14, resize: 'vertical' }}
+                  value={cur.body}
+                  onChange={(e) => setEdits({ ...edits, [emailIdx]: { ...(edits[emailIdx] || {}), body: e.target.value } })} />
+              )}
+              {cur.html && (
+                <div className="dimmer" style={{ fontSize: 11.5, padding: '8px 14px', borderTop: '1px solid var(--border-lt)' }}>
+                  Both versions go in the same email — phones and most clients show the laid-out one,
+                  anything plain-text-only falls back to the Text tab. Editing the text sends that version alone.
+                </div>
+              )}
             </div>
           )}
         </div>

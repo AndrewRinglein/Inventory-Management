@@ -165,6 +165,120 @@ function poBody(po, vendor, hallName, hallAddress, sender, text = {}) {
   ].filter((l) => l !== null).join('\n');
 }
 
+// ---------------------------------------------------------------------------
+// HTML version of the PO.
+//
+// The plain-text table is 86 characters wide, which is fine in a mail client on a
+// desk and unreadable on a phone — it wraps mid-row and the columns stop lining up.
+// So the PO goes out as both: this HTML part, and the text above as the fallback
+// for anyone whose client won't render it. Same wording, same figures, same order.
+//
+// On a wide screen it's the same six-column table. Under 560px the three
+// price-breakdown columns drop out and their content reappears as a line under the
+// item name, leaving units / item / total — which is what someone approving an
+// order on their phone actually reads. Nothing is hidden, only re-stacked.
+
+const esc = (s) => String(s ?? '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+const PO_CSS = `
+  body{margin:0;padding:0;background:#f4f5f6;}
+  .wrap{max-width:680px;margin:0 auto;padding:20px 16px 32px;}
+  .card{background:#fff;border:1px solid #e2e5e8;border-radius:8px;padding:22px 24px;}
+  body,p,td,th,div{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
+    font-size:15px;line-height:1.5;color:#1d2327;}
+  p{margin:0 0 14px;}
+  .num{font-family:'SF Mono',Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;white-space:nowrap;}
+  table.lines{width:100%;border-collapse:collapse;margin:18px 0 4px;}
+  table.lines th{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#6b7378;
+    text-align:right;padding:0 0 6px;border-bottom:1px solid #d8dcdf;font-weight:600;}
+  table.lines th.l,table.lines td.l{text-align:left;padding-right:12px;}
+  table.lines td{padding:9px 0;border-bottom:1px solid #eef0f2;vertical-align:top;}
+  table.lines td.l{padding-right:12px;}
+  th+th,td+td{padding-left:14px;}
+  .detail{display:none;font-size:13px;color:#6b7378;}
+  .tbd{color:#9a6b00;font-weight:700;}
+  .totals{margin:16px 0 0;width:100%;}
+  .totals td{padding:3px 0;font-size:14px;}
+  .totals td.k{color:#5a6167;}
+  .totals td.v{text-align:right;}
+  .totals tr.grand td{font-weight:700;font-size:16px;padding-top:8px;border-top:1px solid #d8dcdf;}
+  .addr{background:#f7f8f9;border-left:3px solid #c9ced2;padding:10px 14px;margin:18px 0;}
+  .foot{font-size:13px;color:#6b7378;}
+  @media only screen and (max-width:560px){
+    .wrap{padding:10px 8px 24px;} .card{padding:16px 14px;border-radius:6px;}
+    .hide-sm{display:none !important;}
+    .detail{display:block;margin-top:3px;}
+    table.lines td{padding:11px 0;}
+  }
+`;
+
+function poHtml(po, vendor, hallName, hallAddress, sender, text = {}) {
+  const address = typeof hallAddress === 'function' ? hallAddress(vendor.id) : hallAddress;
+  const date = new Date(po.sent_at || Date.now()).toLocaleDateString('en-US', {
+    month: 'long', day: 'numeric', year: 'numeric',
+  });
+  const vars = { hall: hallName, po: po.num, vendor: vendor.name, date };
+  const n = po.lines.filter((l) => l.price_tbd).length;
+  const extra = (text?.note ?? '').trim();
+  const anyPacking = po.lines.some((l) => (Number(l.packing_each) || 0) > 0);
+  const priced = po.lines.filter((l) => !l.price_tbd);
+  const goodsTotal = priced.reduce((a, l) => a + l.qty * Number(l.cost), 0);
+  const packingTotal = priced.reduce((a, l) => a + l.qty * (Number(l.packing_each) || 0), 0);
+
+  const row = (l) => {
+    const packEach = Number(l.packing_each) || 0;
+    const deals = Math.max(1, parseInt(l.pack_units) || 1);
+    const base = l.base_cost != null ? Number(l.base_cost) : Number(l.cost) || 0;
+    const packing = packEach * l.qty;
+    const tbd = '<span class="tbd">?</span>';
+    // the same breakdown the wide columns show, written as a sentence for narrow screens
+    const detail = l.price_tbd
+      ? 'price to be confirmed'
+      : [`${money(base)} each`, deals > 1 ? `× ${deals} deals` : null,
+         packing > 0 ? `+ ${money(packing)} packing` : null].filter(Boolean).join(' ');
+    return `<tr>
+      <td class="num l">${l.qty}</td>
+      <td class="l">${esc(l.name_snapshot)}<span class="detail">${detail}</span></td>
+      <td class="num hide-sm">${l.price_tbd ? tbd : money(base)}</td>
+      <td class="num hide-sm">${deals > 1 ? '&times;' + deals : ''}</td>
+      <td class="num hide-sm">${packing > 0 ? money(packing) : ''}</td>
+      <td class="num"><strong>${l.price_tbd ? tbd : money(l.qty * (Number(l.cost) + packEach))}</strong></td>
+    </tr>`;
+  };
+  const totalRow = (k, v, cls = '') => `<tr class="${cls}"><td class="k">${k}</td><td class="v num">${v}</td></tr>`;
+
+  return `<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(po.num)}</title><style>${PO_CSS}</style></head>
+<body><div class="wrap"><div class="card">
+<p>${esc(greet(vendor.contact_name))}</p>
+<p>${esc(fill(pick(text, 'intro'), vars))}</p>
+${n ? `<p>${esc(fill(pick(text, 'tbdNote'), vars))}</p>` : ''}
+${extra ? `<p>${esc(fill(extra, vars))}</p>` : ''}
+<table class="lines" role="presentation">
+<thead><tr>
+  <th class="l">Unit</th><th class="l">Item</th>
+  <th class="hide-sm">Base</th><th class="hide-sm">Deals</th>
+  <th class="hide-sm">Packing</th><th>Line total</th>
+</tr></thead>
+<tbody>${po.lines.map(row).join('')}</tbody></table>
+<table class="totals" role="presentation"><tbody>
+${anyPacking ? totalRow('Stock', fmtMoney(goodsTotal)) : ''}
+${anyPacking ? totalRow('Packing', fmtMoney(packingTotal)) : ''}
+${totalRow('Subtotal', fmtMoney(po.subtotal))}
+${totalRow(`Tax (${(vendor.tax_rate * 100).toFixed(2)}%)`, fmtMoney(po.tax))}
+${totalRow('Total', fmtMoney(po.total), 'grand')}
+</tbody></table>
+${n ? `<p class="foot">Covers the priced lines only — the &ldquo;?&rdquo; items are on top of this.</p>` : ''}
+${anyPacking ? `<p class="foot">Packing is included in each line above, not added separately.</p>` : ''}
+${address ? `<div class="addr"><strong>Please deliver to:</strong><br>${esc(address).replace(/\n/g, '<br>')}</div>` : ''}
+<p>${esc(fill(pick(text, 'closing'), vars))}</p>
+<p class="foot">Ordered ${esc(date)}.</p>
+<p>${signature(sender, hallName).filter(Boolean).map(esc).join('<br>')}</p>
+</div></div></body></html>`;
+}
+
 /**
  * The order run's emails: one PO per vendor (up to 4).
  * Accounting is intentionally NOT copied on POs — they receive the delivered-$ email at
@@ -183,6 +297,7 @@ export function buildOrderEmails(pos, vendors, hallName, hallAddress, _accountin
         ? fill(subject, { hall: hallName, po: po.num, vendor: v.name })
         : `${hallName} order — PO ${po.num}`,
       body: poBody(po, v, hallName, hallAddress, sender, text),
+      html: poHtml(po, v, hallName, hallAddress, sender, text),
     });
   }
   return out;

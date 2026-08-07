@@ -48,6 +48,15 @@ Deno.serve(async (req) => {
           subject: (testMode ? '[TEST] ' : '') + e.subject,
           text: e.body + (testMode ? `\n\n--- TEST MODE: would have gone to ${e.to} ---` : ''),
         };
+        // Send both parts when we have them. The mail client picks: a phone shows the
+        // HTML (which reflows), anything plain-text-only falls back to the same content
+        // as a fixed-width table. Never HTML-only — some vendors read mail in clients
+        // that would show them nothing.
+        if (e.html) {
+          payload.html = testMode
+            ? e.html.replace('</body>', `<p style="font:13px sans-serif;color:#9a6b00">--- TEST MODE: would have gone to ${e.to} ---</p></body>`)
+            : e.html;
+        }
         // don't CC in test mode (everything already goes to one inbox), and never CC the recipient
         const cc = testMode ? [] : ccList.filter((a) => a.toLowerCase() !== to.toLowerCase());
         if (cc.length) payload.cc = cc;
