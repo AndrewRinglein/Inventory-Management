@@ -227,12 +227,13 @@ export default function Review() {
                   <div><b>To:</b> {cur.to}</div>
                   <div style={{ flex: 1 }} />
                   <div className="hall-switch" style={{ margin: 0 }}>
-                    {['phone', 'text', 'edit'].map((t) => (
-                      <button key={t} className={preview === t ? 'on' : ''} onClick={() => setPreview(t)}
-                        title={t === 'phone' ? 'How it looks on a phone'
-                          : t === 'text' ? 'The plain-text version, for clients that show no formatting'
-                          : 'Change the wording on this one email'}>
-                        {t === 'phone' ? 'Phone' : t === 'text' ? 'Text' : 'Edit wording'}
+                    {[
+                      ['edit', '✎ Edit wording', 'Change what this email says'],
+                      ['phone', 'Phone view', 'How it will look on a phone'],
+                      ['text', 'Plain-text view', 'The fallback for clients that show no formatting'],
+                    ].map(([t, label, tip]) => (
+                      <button key={t} className={preview === t ? 'on' : ''} onClick={() => setPreview(t)} title={tip}>
+                        {label}
                       </button>
                     ))}
                   </div>
@@ -243,9 +244,10 @@ export default function Review() {
               {preview === 'edit' ? (
                 <div style={{ padding: 14 }}>
                   <p className="dimmer" style={{ fontSize: 12, margin: '0 0 12px' }}>
-                    Changes here apply to <b>this email only</b> and rebuild both versions, so the phone
-                    layout stays. Blank uses the standard wording (shown greyed). To change every future PO
-                    instead, use Settings → PO email wording.
+                    <b>This is the only tab you type in</b> — the two views beside it just show the result.
+                    Changes apply to this email only and rebuild both versions, so the phone layout stays.
+                    Blank uses the standard wording (shown greyed). To change every future PO instead,
+                    use Settings → PO email wording.
                   </p>
                   {[
                     ['subject', 'Subject line', 1, `${'{hall}'} order — PO ${'{po}'}`],

@@ -296,15 +296,19 @@ export default function Orders() {
               <span className="dimmer" style={{ fontSize: 12 }}>to {vendorOf(cur).name} · {resendEmail.to}</span>
               <div style={{ flex: 1 }} />
               <div className="hall-switch" style={{ margin: 0 }}>
-                {['phone', 'text', 'edit'].map((t) => (
-                  <button key={t} className={resend.tab === t ? 'on' : ''} onClick={() => setResend({ ...resend, tab: t })}>
-                    {t === 'phone' ? 'Phone' : t === 'text' ? 'Text' : 'Edit wording'}
-                  </button>
+                {[
+                  ['edit', '✎ Edit wording', 'Change what this email says'],
+                  ['phone', 'Phone view', 'How it will look on a phone'],
+                  ['text', 'Plain-text view', 'The fallback for clients that show no formatting'],
+                ].map(([t, label, tip]) => (
+                  <button key={t} className={resend.tab === t ? 'on' : ''} title={tip}
+                    onClick={() => setResend({ ...resend, tab: t })}>{label}</button>
                 ))}
               </div>
             </div>
             <p className="dimmer" style={{ fontSize: 12, margin: '0 0 10px' }}>
               Same PO number, rebuilt from this order's own lines — nothing new is created and no stock moves.
+              Nothing sends until you press the button at the bottom; <b>✎ Edit wording</b> is where you change what it says.
             </p>
 
             {tbdLines > 0 && (
