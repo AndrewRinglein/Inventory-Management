@@ -38,11 +38,35 @@ export const allInCost = (p, vendor) => round2(boxCost(p) + packingFor(p, vendor
 export const splitBoxes = (p) => Math.max(1, parseInt(p?.split_boxes) || 1);
 
 /**
- * What ONE INVENTORY BOX is worth — the landed cost of the ordered unit spread
- * across the boxes it becomes. This is the number inventory is valued at; boxCost
- * is what the vendor invoices. Confusing the two overstated a hall by $174k.
+ * What ONE INVENTORY UNIT is worth — the goods cost of the ordered unit spread
+ * across the units it becomes. A Biker case is 80 deals at $64.60, so $5,168, and
+ * it arrives as 16 totes: $323.00 a tote.
+ *
+ * Packing is deliberately NOT in here. It is a charge for getting the goods to the
+ * door, not part of what the goods are worth sitting on a shelf, and rolling it in
+ * makes a tote look more valuable than an identical tote that came in a bigger
+ * delivery. It stays on the PO, where the vendor invoices it. boxCost + packing is
+ * what gets paid; this is what gets counted.
  */
-export const perBoxValue = (p, vendor) => round2(allInCost(p, vendor) / splitBoxes(p));
+export const perBoxValue = (p) => round2(boxCost(p) / splitBoxes(p));
+
+/**
+ * The noun for one counted unit. A bare "16" on the Inventory screen is ambiguous
+ * across this catalog — it could be 16 totes, 16 lettered packs or 16 boxes.
+ */
+const UNIT_WORDS = {
+  box: ['box', 'boxes'],
+  pack: ['pack', 'packs'],
+  tote: ['tote', 'totes'],
+  dozen: ['12 pack', '12 packs'],
+};
+export function stockUnit(p) {
+  const key = p?.stock_unit
+    || (packUnits(p) === 80 ? 'tote' : p?.type === 'strip' ? 'pack' : p?.type === 'supply' ? 'dozen' : 'box');
+  return UNIT_WORDS[key] || UNIT_WORDS.box;
+}
+/** "1 tote" / "16 totes" */
+export const unitLabel = (p, n) => stockUnit(p)[n === 1 ? 0 : 1];
 
 /** The four parts, ready to print. */
 export function priceParts(p, vendor) {
@@ -55,7 +79,8 @@ export function priceParts(p, vendor) {
     packing: packingFor(p, vendor),
     allIn: allInCost(p, vendor),
     split,
-    perBox: perBoxValue(p, vendor),
+    perBox: perBoxValue(p),
+    unit: stockUnit(p),
     multiplied: units > 1,
     splits: split > 1,
   };

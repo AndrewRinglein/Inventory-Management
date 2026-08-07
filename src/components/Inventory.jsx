@@ -6,13 +6,14 @@ import { countByProduct } from '../lib/logic/boxes.js';
 import { SESSIONS } from '../lib/sessions.js';
 import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.js';
 import { needsCost, needsType, needsTickets, needsVendor } from '../lib/logic/setup.js';
-import { priceParts, perBoxValue } from '../lib/logic/pricing.js';
+import { priceParts, perBoxValue, stockUnit, unitLabel } from '../lib/logic/pricing.js';
 import UpdateGame from './UpdateGame.jsx';
 
 const COLS = [
   { key: 'vendor', label: 'Vendor' }, { key: 'type', label: 'Type' },
   { key: 'tickets', label: 'Tickets', r: true }, { key: 'price', label: '$ / ticket', r: true },
-  { key: 'cost', label: 'Unit cost', r: true }, { key: 'inv', label: 'In stock', r: true },
+  { key: 'cost', label: 'Per unit', r: true }, { key: 'inv', label: 'In stock', r: true },
+  { key: 'unit', label: 'Counted as' },
   { key: 'open', label: 'Opened', r: true }, { key: 'onorder', label: 'On order', r: true },
   { key: 'value', label: 'Value', r: true }, { key: 'assigned', label: 'Set aside' },
 ];
@@ -60,7 +61,7 @@ export default function Inventory() {
       const held = (c.inv || 0) + (c.open || 0);
       // value what's ON THE SHELF: a case that splits into 16 totes is worth
       // 1/16 per tote, not the case price per tote
-      const value = held * perBoxValue(p, vmap[p.vendor_id]);
+      const value = held * perBoxValue(p);
       totVal += value;
       if (needsCost(p)) unvalued += held;   // counted, but we can't put a number on it yet
       out.push({
@@ -69,6 +70,7 @@ export default function Inventory() {
           name: p.name.toLowerCase(), vendor: vmap[p.vendor_id]?.name || '', type: p.type,
           tickets: p.tickets || 0, price: ticketPrice(p), cost: Number(p.cost) || 0,
           inv: c.inv || 0, open: c.open || 0, onorder: c.onorder || 0, value,
+          unit: stockUnit(p)[1],
           assigned: Object.keys(asg).join(', '),
         },
         assignedLabel: Object.entries(asg).map(([k, n]) => `${k} ×${n}`).join(', ') || '—',
@@ -133,7 +135,7 @@ export default function Inventory() {
       });
       await reloadHall();
       setAdj(null); setAdjNote('');
-      setToast(`${adj.p.name}: ${adj.from} → ${adj.to} boxes`);
+      setToast(`${adj.p.name}: ${adj.from} → ${adj.to} ${stockUnit(adj.p)[1]}`);
     } catch (e) {
       setToast(e.message || 'Could not adjust that count');
     } finally { setSaving(false); }
@@ -162,7 +164,7 @@ export default function Inventory() {
           {rows.length} products with stock · owned value <b className="mono">{fmtMoney(rows.totVal)}</b>
           {rows.unvalued > 0 && (
             <span className="tbd" style={{ cursor: 'default', fontSize: 12 }}
-              title={`${rows.unvalued} boxes have no unit cost yet, so they aren't in this figure`}>
+              title={`${rows.unvalued} units have no cost yet, so they aren't in this figure`}>
               {' '}+ {rows.unvalued} unpriced
             </span>
           )}
@@ -209,12 +211,13 @@ export default function Inventory() {
                 <td className="r mono">
                   {needsCost(r.p) ? <Upd p={r.p} /> : (() => {
                     const pp = priceParts(r.p, vmap[r.p.vendor_id]);
-                    return <span title={`${fmtMoney(pp.base)} per unit × ${pp.units} = ${fmtMoney(pp.box)} per ordered unit`
-                      + (pp.splits ? `, arriving as ${pp.split} boxes at ${fmtMoney(pp.perBox)} each` : '')}>
+                    return <span title={`${fmtMoney(pp.base)} per deal × ${pp.units} deal${pp.units === 1 ? '' : 's'} = ${fmtMoney(pp.box)} per ordered unit`
+                      + (pp.splits ? `, arriving as ${pp.split} ${pp.unit[1]} at ${fmtMoney(pp.perBox)} each` : '')
+                      + (pp.packing ? `. Packing of ${fmtMoney(pp.packing)} is billed on the PO but not carried in stock value.` : '')}>
                       {fmtMoney(pp.perBox)}
                       {(pp.multiplied || pp.splits) && (
                         <div className="dimmer" style={{ fontSize: 10.5 }}>
-                          {pp.splits ? `${fmtMoney(pp.allIn)} ÷ ${pp.split}` : `${fmtMoney(pp.base)} ×${pp.units}`}
+                          {pp.splits ? `${fmtMoney(pp.box)} ÷ ${pp.split}` : `${fmtMoney(pp.base)} ×${pp.units}`}
                         </div>
                       )}
                     </span>;
@@ -228,6 +231,10 @@ export default function Inventory() {
                         <b>{r.c.inv || 0}</b> ✎
                       </button>
                     : <b>{r.c.inv || 0}</b>}
+                </td>
+                <td className="dimmer" style={{ fontSize: 12 }}
+                  title={`Every count on this row — in stock, opened, on order — is in ${stockUnit(r.p)[1]}`}>
+                  {unitLabel(r.p, r.c.inv || 0)}
                 </td>
                 <td className="r mono" style={{ color: 'var(--orange)' }}>{r.c.open || 0}</td>
                 <td className="r mono dimmer">{r.c.onorder || 0}</td>
@@ -260,12 +267,12 @@ export default function Inventory() {
               <div className="field" style={{ margin: 0 }}><label>System says</label>
                 <div className="mono" style={{ fontSize: 22, fontWeight: 700, padding: '4px 0' }}>{adj.from}</div></div>
               <div style={{ fontSize: 20, color: 'var(--ink-2)', paddingBottom: 8 }}>→</div>
-              <div className="field" style={{ margin: 0 }}><label>Actually on the shelf</label>
+              <div className="field" style={{ margin: 0 }}><label>Actually on the shelf ({stockUnit(adj.p)[1]})</label>
                 <input className="num" type="number" min="0" autoFocus value={adj.to}
                   onChange={(e) => setAdj({ ...adj, to: Math.max(0, parseInt(e.target.value) || 0) })}
                   style={{ width: 110, fontSize: 20, fontWeight: 700 }} /></div>
               <div style={{ paddingBottom: 10, fontWeight: 700, fontSize: 14, color: adj.to > adj.from ? 'var(--green)' : adj.to < adj.from ? 'var(--orange)' : 'var(--ink-2)' }}>
-                {adj.to === adj.from ? 'no change' : (adj.to > adj.from ? `+${adj.to - adj.from}` : `−${adj.from - adj.to}`) + ' boxes'}
+                {adj.to === adj.from ? 'no change' : (adj.to > adj.from ? `+${adj.to - adj.from}` : `−${adj.from - adj.to}`) + ' ' + stockUnit(adj.p)[1]}
               </div>
             </div>
             <div className="field" style={{ marginTop: 14 }}><label>Note — why is it different? (required)</label>
@@ -274,9 +281,9 @@ export default function Inventory() {
                 onKeyDown={(e) => e.key === 'Enter' && saveAdjust()} style={{ width: '100%' }} /></div>
             <p className="dimmer" style={{ fontSize: 11.5, marginTop: 8 }}>
               {adj.to < adj.from
-                ? 'Removed boxes are marked missing, not deleted — the history stays intact.'
+                ? `Removed ${stockUnit(adj.p)[1]} are marked missing, not deleted — the history stays intact.`
                 : adj.to > adj.from
-                  ? `Added boxes are valued at ${fmtMoney(adj.p.cost)} each, this hall's current unit cost.`
+                  ? `Added ${stockUnit(adj.p)[1]} are valued at ${fmtMoney(perBoxValue(adj.p))} each.`
                   : 'Set a different number to record an adjustment.'}
             </p>
             <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>

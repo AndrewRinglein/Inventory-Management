@@ -78,7 +78,7 @@ export function buildDrafts(qty, products, vendors) {
       packing_each: packingFor(p, vmap[p.vendor_id]),
       // one ordered unit can arrive as several inventory boxes, each worth a share
       split_boxes: Math.max(1, parseInt(p.split_boxes) || 1),
-      per_box_cost: perBoxValue(p, vmap[p.vendor_id]),
+      per_box_cost: perBoxValue(p),
     });
   }
   return Object.entries(byVendor).map(([vendorId, rawLines]) => {

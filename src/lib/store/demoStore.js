@@ -2,6 +2,7 @@
 // Lets the app run before Supabase is set up, and doubles as the training/demo sandbox.
 
 import { CATALOG } from '../../data/catalog.js';
+import { perBoxValue } from '../logic/pricing.js';
 import { transition } from '../logic/boxes.js';
 
 const uid = () => 'id_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
@@ -195,7 +196,7 @@ export class DemoStore {
       for (let i = 0; i < n; i++) {
         this.db.boxes.push({
           id: uid(), hall_id: hallId, product_id: product.id, state: 'in_inventory',
-          cost: Number(product.cost) || 0, serial: '', session_tag: null,
+          cost: perBoxValue(product), serial: '', session_tag: null,
           ordered_at: new Date().toISOString(), received_at: new Date().toISOString(),
         });
       }

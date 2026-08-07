@@ -3,6 +3,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { senderFor } from '../logic/emails.js';
+import { perBoxValue } from '../logic/pricing.js';
 
 const ok = ({ data, error }) => { if (error) throw new Error(error.message); return data; };
 
@@ -175,7 +176,7 @@ export class SupabaseStore {
     if (delta > 0) {
       const rows = Array.from({ length: n }, () => ({
         hall_id: hallId, product_id: product.id, state: 'in_inventory',
-        cost: Number(product.cost) || 0, serial: '', received_at: new Date().toISOString(),
+        cost: perBoxValue(product), serial: '', received_at: new Date().toISOString(),
       }));
       ok(await this.sb.from('boxes').insert(rows));
     } else {
