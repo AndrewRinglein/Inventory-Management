@@ -1,0 +1,35 @@
+-- August 2026 deliveries recorded from the paper invoices, Santa Clara.
+--
+-- Two of the five are entered here as recorded-only POs (placed outside this
+-- system, so no email follows) each closed by a delivery that puts the stock on
+-- the shelf. Both reproduce their invoice to the cent:
+--
+--   SC-2026-08-BV-001  Bingo Vision 1806034   66 goods lines + the bundling fee
+--                      goods 33,119.60  service 672.00  tax 3,229.16  total 37,020.76
+--                      313 boxes: 169 flash, 144 strip packs
+--   SC-2026-08-MD-001  Marathon 5812098       5 lines
+--                      goods 1,396.00  tax 136.11  total 1,532.11   6 boxes
+--
+-- Not entered, and why:
+--   Bingo Vision 1806006   the ten Biker titles need allocating across the four
+--                          day-group tote products before the count can be right
+--   Marathon 5812121       quantities not legible
+--   Pacific Gaming 44971   line items not captured
+--
+-- Hold Your Horses is split in 030/031: the 1080-ticket one keeps P069 as SMALL
+-- BALL, and the 1920-ticket one the invoice sells at $112.90 becomes C864 BALL.
+--
+-- Also created because they appear on 1806034 and were nowhere in the catalog:
+--   C863 U PIK EM LUCKY 7 3V1 (billed by the PACK at $30.00)
+--   C865 GRASSHOPPER 1260/$1 at $74.10
+--
+-- The insert itself was run against the live database; it is left out of this
+-- file deliberately. Re-running it would create a second copy of both deliveries
+-- and double the stock. This migration exists so the history explains the rows.
+
+insert into products
+  (id, vendor_id, name, orig_name, vendor_sku, type, base_cost, pack_units, split_boxes,
+   packing_units, stock_unit, tickets, price_per_ticket, active)
+values
+  ('C865','bv','GRASSHOPPER','GRASSHOPPER 1260/$1','AN6268J','flash',74.10,1,1,1,'box',1260,1.00,true)
+on conflict (id) do nothing;
