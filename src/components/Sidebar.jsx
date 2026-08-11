@@ -34,6 +34,7 @@ export default function Sidebar() {
       <Item id="dashboard" label="Dashboard" />
       <Item id="purchase" label="Purchase" />
       <div className="sb-sec">Track</div>
+      <Item id="sessionuse" label="Session Use" title="What each session played, and taking it out of stock" />
       <Item id="openboxes" label="Open Boxes" />
       <Item id="inventory" label="Inventory" />
       <Item id="orders" label="Open Orders" badge={openPos || null} />

@@ -238,6 +238,50 @@ export class DemoStore {
     this._save();
   }
 
+  // ---- session use ---- (demo mirror of the Supabase implementation)
+  async getSessions() { return [...(this.db.sessions || [])]; }
+  async getSessionPlays(sessionId) { return (this.db.session_plays || []).filter((p) => p.session_id === sessionId); }
+  async getAllSessionPlays() { return [...(this.db.session_plays || [])]; }
+
+  async applySession(sessionId, plays) {
+    const sess = (this.db.sessions || []).find((x) => x.id === sessionId);
+    if (!sess) throw new Error('Session not found');
+    if (sess.applied_at) throw new Error('That session has already been taken out of stock.');
+    const want = {};
+    for (const p of plays) if (p.product_id) want[p.product_id] = (want[p.product_id] || 0) + p.qty;
+    const short = []; let moved = 0;
+    for (const [pid, n] of Object.entries(want)) {
+      const pool = this.db.boxes.filter((b) => b.hall_id === sess.hall_id
+        && b.product_id === pid && b.state === 'in_inventory').slice(0, n);
+      if (pool.length < n) short.push({ product_id: pid, wanted: n, found: pool.length });
+      for (const b of pool) {
+        b.state = 'sold_out';
+        b.session_id = sessionId;
+        b.opened_session = `${sess.session_date}${sess.part ? ' ' + sess.part : ''}`;
+        b.opened_at = b.opened_at || new Date().toISOString();
+        b.sold_out_at = new Date().toISOString();
+        moved++;
+      }
+    }
+    sess.applied_at = new Date().toISOString();
+    this._event('session.apply', 'sessions', sessionId, { moved, short: short.length });
+    this._save();
+    return { session: sess, moved, short };
+  }
+
+  async undoSession(sessionId) {
+    const sess = (this.db.sessions || []).find((x) => x.id === sessionId);
+    const mine = this.db.boxes.filter((b) => b.session_id === sessionId);
+    for (const b of mine) {
+      b.state = 'in_inventory'; b.session_id = null; b.opened_session = null;
+      b.opened_at = null; b.sold_out_at = null;
+    }
+    if (sess) sess.applied_at = null;
+    this._event('session.undo', 'sessions', sessionId, { restored: mine.length });
+    this._save();
+    return { session: sess, restored: mine.length };
+  }
+
   // ---- receiving ----
   async createShipment(s) {
     const row = { id: uid(), confirmed: false, received_at: new Date().toISOString(), ...s };

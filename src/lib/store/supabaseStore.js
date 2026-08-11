@@ -223,6 +223,88 @@ export class SupabaseStore {
     await this.logEvent('adjust', 'products', product.id, { label, note, delta, hall: hallId });
   }
 
+  // ---- session use ----
+  //
+  // A session records what the count sheets say was played. Nothing leaves stock
+  // until someone applies it, because the sheet and the shelf disagree often
+  // enough that the gap has to be looked at rather than silently absorbed.
+  async getSessions() {
+    return fetchAll(() => this.sb.from('sessions').select('*')
+      .order('session_date', { ascending: false }).order('part'));
+  }
+  async getSessionPlays(sessionId) {
+    return fetchAll(() => this.sb.from('session_plays').select('*').eq('session_id', sessionId).order('name_raw'));
+  }
+  /** Every play across every session — enough to draw the cards without N queries. */
+  async getAllSessionPlays() {
+    return fetchAll(() => this.sb.from('session_plays').select('*'));
+  }
+
+  /**
+   * Take a session's boxes out of stock.
+   *
+   * in_inventory -> opened -> sold_out, one box at a time, because that is the
+   * lifecycle every other screen already understands and the database enforces it.
+   * Each box is stamped with the session, which is what makes undo exact rather
+   * than a guess at which boxes to put back.
+   *
+   * Short lines are reported, not fudged: if the shelf holds four and the sheet
+   * says eight, four move and the other four come back as a shortfall for someone
+   * to explain. Never invents a box that was never counted in.
+   */
+  async applySession(sessionId, plays) {
+    const sess = ok(await this.sb.from('sessions').select('*').eq('id', sessionId).single());
+    if (sess.applied_at) throw new Error('That session has already been taken out of stock.');
+    const want = {};
+    for (const p of plays) {
+      if (!p.product_id) continue;
+      want[p.product_id] = (want[p.product_id] || 0) + p.qty;
+    }
+    const short = [];
+    let moved = 0;
+    for (const [pid, n] of Object.entries(want)) {
+      const pool = ok(await this.sb.from('boxes').select('id')
+        .eq('hall_id', sess.hall_id).eq('product_id', pid).eq('state', 'in_inventory')
+        .order('received_at', { nullsFirst: true }).limit(n));      // oldest first
+      if (pool.length < n) short.push({ product_id: pid, wanted: n, found: pool.length });
+      for (const b of pool) {
+        ok(await this.sb.from('boxes').update({ state: 'opened', session_id: sessionId,
+          opened_session: `${sess.session_date}${sess.part ? ' ' + sess.part : ''}` }).eq('id', b.id));
+        ok(await this.sb.from('boxes').update({ state: 'sold_out' }).eq('id', b.id));
+        moved++;
+      }
+    }
+    const applied = ok(await this.sb.from('sessions')
+      .update({ applied_at: new Date().toISOString() }).eq('id', sessionId).select().single());
+    await this.logEvent('session.apply', 'sessions', sessionId, {
+      label: `${sess.hall_id === 'sc' ? 'Santa Clara' : 'Redwood City'} — ${sess.session_date}` +
+             `${sess.part ? ' ' + sess.part : ''}: ${moved} box(es) taken out of stock`,
+      moved, short: short.length, hall: sess.hall_id,
+    });
+    return { session: applied, moved, short };
+  }
+
+  /** Put a session's boxes back. Exact, because each carries the session's id. */
+  async undoSession(sessionId) {
+    const sess = ok(await this.sb.from('sessions').select('*').eq('id', sessionId).single());
+    const boxes = await fetchAll(() => this.sb.from('boxes').select('id,state').eq('session_id', sessionId));
+    for (const b of boxes) {
+      if (b.state === 'sold_out') ok(await this.sb.from('boxes').update({ state: 'opened' }).eq('id', b.id));
+      ok(await this.sb.from('boxes').update({
+        state: 'in_inventory', session_id: null, opened_session: null,
+        opened_at: null, sold_out_at: null,
+      }).eq('id', b.id));
+    }
+    const restored = ok(await this.sb.from('sessions')
+      .update({ applied_at: null }).eq('id', sessionId).select().single());
+    await this.logEvent('session.undo', 'sessions', sessionId, {
+      label: `${sess.hall_id === 'sc' ? 'Santa Clara' : 'Redwood City'} — ${sess.session_date}` +
+             `${sess.part ? ' ' + sess.part : ''}: ${boxes.length} box(es) put back`,
+      restored: boxes.length,
+    });
+    return { session: restored, restored: boxes.length };
+  }
+
   // ---- receiving ----
   async createShipment(s) { return ok(await this.sb.from('shipments').insert(s).select().single()); }
   async confirmShipment(id) { return ok(await this.sb.from('shipments').update({ confirmed: true }).eq('id', id).select().single()); }
