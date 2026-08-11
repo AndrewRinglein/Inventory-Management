@@ -17,6 +17,8 @@ export default function Dashboard() {
     setToast(`${HALL_NAMES[hall]} EOM marked complete`);
   };
   useEffect(() => { store.getEvents(12).then(setEvents); }, [boxes, pos]);   // eslint-disable-line
+  const [dels, setDels] = useState([]);
+  useEffect(() => { store.getDeliveries(hall).then(setDels).catch(() => setDels([])); }, [hall, boxes]);   // eslint-disable-line
 
   const live = boxes.filter((b) => b.state === 'in_inventory' || b.state === 'opened');
   const liveVal = sumMoney(live, (b) => b.cost);
@@ -26,6 +28,14 @@ export default function Dashboard() {
   const inTransit = boxes.filter((b) => b.state === 'on_order' && (!b.po_id || liveIds.has(b.po_id))).length;
   const openPos = pos.filter((p) => p.status === 'sent' || p.status === 'partial');
   const openPay = payments.filter((p) => p.status === 'open');
+
+  // An order that arrives and closes the same day never touches "open orders",
+  // so without this the dashboard is silent about the busiest thing that happened.
+  const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
+  const monthPos = pos.filter((p) => p.sent_at && new Date(p.sent_at) >= monthStart);
+  const monthSpend = sumMoney(monthPos, (p) => p.total);
+  const delCounts = boxes.reduce((n, b) => (b.delivery_id ? { ...n, [b.delivery_id]: (n[b.delivery_id] || 0) + 1 } : n), {});
+  const recentDels = dels.slice(0, 6);
 
   return (
     <div>
@@ -42,6 +52,7 @@ export default function Dashboard() {
         <div className="card pad stat"><label>Live inventory value</label><div className="v">{fmtMoney(liveVal)}</div><div className="s">{live.length} boxes owned</div></div>
         <div className="card pad stat"><label>Boxes in stock</label><div className="v">{boxes.filter((b) => b.state === 'in_inventory').length}</div><div className="s">{boxes.filter((b) => b.state === 'opened').length} opened on floor</div></div>
         <div className="card pad stat"><label>Open orders</label><div className="v">{openPos.length}</div><div className="s">{inTransit} boxes in transit</div></div>
+        <div className="card pad stat"><label>Ordered this month</label><div className="v">{fmtMoney(monthSpend)}</div><div className="s">{monthPos.length} order{monthPos.length === 1 ? '' : 's'} · {dels.length} deliver{dels.length === 1 ? 'y' : 'ies'} logged</div></div>
         <div className="card pad stat"><label>Open payments</label><div className="v">{fmtMoney(sumMoney(openPay, (p) => p.amount))}</div><div className="s">{openPay.length} invoices awaiting payment</div></div>
       </div>
       <div className="two-col">
@@ -59,6 +70,19 @@ export default function Dashboard() {
               ))}
             </tbody>
           </table>
+        </div>
+        <div className="card">
+          <div style={{ padding: '12px 16px', fontWeight: 600, fontSize: 13, borderBottom: '1px solid var(--border)' }}>Recently received</div>
+          {recentDels.length === 0 && <div style={{ padding: 26, textAlign: 'center' }} className="dimmer">Nothing received yet.</div>}
+          <table className="tbl"><tbody>
+            {recentDels.map((d) => (
+              <tr key={d.id} style={{ cursor: 'pointer' }} onClick={() => setScreen('receiving')}>
+                <td className="first mono">{new Date(d.received_at + 'T12:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' })}</td>
+                <td className="mono" style={{ fontSize: 12 }}>{d.po_ref || d.invoice_no || '—'}</td>
+                <td className="r mono last">{delCounts[d.id] || 0} boxes</td>
+              </tr>
+            ))}
+          </tbody></table>
         </div>
         <div className="card">
           <div style={{ padding: '12px 16px', fontWeight: 600, fontSize: 13, borderBottom: '1px solid var(--border)' }}>Recent activity</div>

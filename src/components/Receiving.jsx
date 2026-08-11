@@ -25,6 +25,7 @@ export default function Receiving() {
   const [addQty, setAddQty] = useState('1');     // manual entry: how many boxes
   const addNameRef = useRef(null);
   const [tbdPrice, setTbdPrice] = useState({});  // product_id -> unit price read off the invoice
+  const [deliveries, setDeliveries] = useState([]);
   const [stage, setStage] = useState('checkin'); // checkin | emails
   const [pendingEmails, setPendingEmails] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -38,6 +39,15 @@ export default function Receiving() {
   stateRef.current = { lines, recv, serials, cur, extras };
 
   const vmap = useMemo(() => Object.fromEntries(vendors.map((v) => [v.id, v])), [vendors]);
+
+  // what has already landed, newest first — reloaded whenever stock moves
+  useEffect(() => { store.getDeliveries(hall).then(setDeliveries).catch(() => setDeliveries([])); },
+    [hall, boxes, store]);
+  const delCounts = useMemo(() => {
+    const n = {};
+    for (const b of boxes) if (b.delivery_id) n[b.delivery_id] = (n[b.delivery_id] || 0) + 1;
+    return n;
+  }, [boxes]);
 
   // manual entry: type a game name, pick from the catalog (this vendor's games first)
   const matchingProducts = useMemo(() => {
@@ -388,6 +398,30 @@ export default function Receiving() {
                 <td>{vmap[p.vendor_id]?.name}</td>
                 <td><span className={'badge ' + (p.status === 'sent' ? 'b-gold' : 'b-orange')}>{p.status === 'sent' ? 'awaiting delivery' : 'partially received'}</span></td>
                 <td className="r mono last">{fmtMoney(p.total)}</td>
+              </tr>
+            ))}
+          </tbody></table>
+        </div>
+
+        {/* Everything that has already landed. Without this the screen shows only
+            what is still outstanding, so an order that arrived and closed the same
+            day never appears here at all — including every delivery entered from a
+            paper invoice after the fact. */}
+        <div className="card" style={{ overflow: 'hidden', marginTop: 14 }}>
+          <div style={{ padding: '12px 16px', fontWeight: 600, fontSize: 13, borderBottom: '1px solid var(--border)' }}>
+            Received &middot; last {deliveries.length} {deliveries.length === 1 ? 'delivery' : 'deliveries'}
+          </div>
+          {deliveries.length === 0 && (
+            <div style={{ padding: 26, textAlign: 'center' }} className="dimmer">Nothing received yet.</div>
+          )}
+          <table className="tbl"><tbody>
+            {deliveries.map((d) => (
+              <tr key={d.id}>
+                <td className="first mono">{new Date(d.received_at + 'T12:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' })}</td>
+                <td>{vmap[d.vendor_id]?.name || d.vendor_id}</td>
+                <td className="mono dim" style={{ fontSize: 12 }}>{d.po_ref || '—'}</td>
+                <td className="dim" style={{ fontSize: 12 }}>{d.invoice_no ? `inv ${d.invoice_no}` : ''}</td>
+                <td className="r mono last">{delCounts[d.id] || 0} {delCounts[d.id] === 1 ? 'box' : 'boxes'}</td>
               </tr>
             ))}
           </tbody></table>

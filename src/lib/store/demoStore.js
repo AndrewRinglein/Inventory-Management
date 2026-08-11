@@ -441,7 +441,12 @@ export class DemoStore {
   // ---- settings / events ----
   async getSetting(key) { return this.db.settings[key]; }
   async setSetting(key, value) { this.db.settings[key] = value; this._save(); }
-  async getEvents(limit = 200) { return this.db.events.slice(0, limit); }
+  // mirrors supabaseStore.getEvents — raw audit rows are forensics, not activity
+  async getEvents(limit = 200, { raw = false } = {}) {
+    const rows = raw ? this.db.events
+      : this.db.events.filter((e) => !['insert', 'update', 'delete'].includes(e.kind));
+    return rows.slice(0, limit);
+  }
   async logEvent(kind, entity, entity_id, detail = {}) { this._event(kind, entity, entity_id, detail); this._save(); }
 
   // ---- AI (demo stub: reads nothing, explains itself) ----

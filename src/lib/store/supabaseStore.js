@@ -514,7 +514,23 @@ export class SupabaseStore {
     return rows[0]?.value;
   }
   async setSetting(key, value) { ok(await this.sb.from('settings').upsert({ key, value })); }
-  async getEvents(limit = 200) { return ok(await this.sb.from('events').select('*').order('at', { ascending: false }).limit(limit)); }
+  /**
+   * Activity, as a person would describe it.
+   *
+   * There is a row-level audit trigger writing an event for every insert, update
+   * and delete — thousands of them, none carrying a label. Those are forensics,
+   * not activity: loading one invoice writes 300 of them and pushes everything
+   * legible off the end of a 12-row panel. Recording the five August deliveries
+   * buried the whole feed under 615 unlabelled rows in a single afternoon.
+   *
+   * So this returns the events the app deliberately logged. Pass raw:true for the
+   * audit trail.
+   */
+  async getEvents(limit = 200, { raw = false } = {}) {
+    let qy = this.sb.from('events').select('*');
+    if (!raw) qy = qy.not('kind', 'in', '("insert","update","delete")');
+    return ok(await qy.order('at', { ascending: false }).limit(limit));
+  }
   async logEvent(kind, entity, entity_id, detail = {}) {
     ok(await this.sb.from('events').insert({ kind, entity, entity_id, detail, actor: 'app' }));
   }
