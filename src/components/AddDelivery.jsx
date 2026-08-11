@@ -10,12 +10,12 @@ const HALL = { sc: 'Santa Clara', rwc: 'Redwood City' };
 /**
  * Record a delivery that arrived, with or without a purchase order behind it.
  *
- * The PO reference has four shapes and they are not the same thing. One of ours
- * means the boxes it already put on order are the ones arriving, so they get
- * received rather than duplicated. A number typed by hand means the order exists
- * on paper somewhere else. Pre-PO-System means the stock predates this app and
- * there is no order to find. None means there genuinely wasn't one. Recording
- * which is more useful than leaving the field blank and wondering later.
+ * The PO reference has three shapes. One of ours means the boxes that order
+ * already put on order are the ones arriving, so they get received rather than
+ * duplicated. A number typed by hand means the order exists on paper somewhere
+ * else. None covers everything with no order to point at — a phoned-in drop, or
+ * stock that predates this app entirely; the distinction makes no difference to
+ * what happens, so it isn't asked for.
  */
 export default function AddDelivery({ onClose }) {
   const { hall, products, vendors, boxes, pos, store, reloadHall, setToast } = useContext(AppCtx);
@@ -23,7 +23,7 @@ export default function AddDelivery({ onClose }) {
 
   const [vendorId, setVendorId] = useState('');
   const [when, setWhen] = useState(today);
-  const [poMode, setPoMode] = useState('none');   // none | ours | typed | prepo
+  const [poMode, setPoMode] = useState('none');   // none | ours | typed
   const [poId, setPoId] = useState('');
   const [poTyped, setPoTyped] = useState('');
   const [invoiceNo, setInvoiceNo] = useState('');
@@ -78,8 +78,7 @@ export default function AddDelivery({ onClose }) {
     return a + l.qty * (p ? perBoxValue(p) : 0);
   }, 0);
 
-  const poRef = poMode === 'prepo' ? 'PRE-PO-SYSTEM'
-    : poMode === 'typed' ? poTyped.trim()
+  const poRef = poMode === 'typed' ? poTyped.trim()
     : poMode === 'ours' ? (pos.find((p) => p.id === poId)?.num || '')
     : '';
 
@@ -145,8 +144,7 @@ export default function AddDelivery({ onClose }) {
             {[
               ['ours', 'One of ours'],
               ['typed', 'A PO number from elsewhere'],
-              ['prepo', 'Pre-PO-System'],
-              ['none', 'No PO at all'],
+              ['none', 'No PO — phoned in, a standing drop, or before this system'],
             ].map(([k, label]) => (
               <label key={k} style={{ display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}>
                 <input type="radio" name="pomode" checked={poMode === k} onChange={() => setPoMode(k)} />
@@ -181,13 +179,6 @@ export default function AddDelivery({ onClose }) {
           {poMode === 'typed' && (
             <input type="text" autoFocus value={poTyped} placeholder="e.g. 8842, or their order number"
               onChange={(e) => setPoTyped(e.target.value)} style={{ width: 260, marginTop: 8 }} />
-          )}
-          {poMode === 'prepo' && (
-            <div className="dimmer" style={{ fontSize: 11.5, marginTop: 6 }}>
-              Recorded as <span className="mono">PRE-PO-SYSTEM</span> — stock that arrived before this
-              system was tracking orders. It counts into inventory exactly the same way; it just has no
-              order to reconcile against, and saying so is more useful than leaving the field blank.
-            </div>
           )}
         </div>
 
