@@ -8,7 +8,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "node --test tests/logic.test.js && node tests/run-render.mjs",
-    "test:render": "node tests/run-render.mjs"
+    "test:render": "node tests/run-render.mjs",
+    "build:pages": "BASE_PATH=/Inventory-Management/ vite build",
+    "deploy": "npm run build:pages && node scripts/deploy-pages.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
