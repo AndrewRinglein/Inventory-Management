@@ -107,10 +107,14 @@ test('packing never applies to a vendor that does not charge it', () => {
   assert.ok(!drafts[0].lines.some((l) => l.kind === 'fee'), 'only Bingo Vision charges packing');
 });
 
-test('packing is included in subtotal, tax and total', () => {
+test('packing is in the subtotal and the total, but not in the tax', () => {
   const [d] = buildDrafts({ P1: 2 }, products, vendorsFee);          // 2 x 117.30 = 234.60 + 8 packing
+  assert.equal(d.goods, 234.60);
+  assert.equal(d.packing, 8);
   assert.equal(d.subtotal, 242.60);
-  assert.equal(d.total, round2(242.60 * 1.0975));
+  assert.equal(d.tax, round2(234.60 * 0.0975), 'the goods are taxed, the service is not');
+  assert.notEqual(d.tax, round2(242.60 * 0.0975));
+  assert.equal(d.total, round2(242.60 + round2(234.60 * 0.0975)));
 });
 
 test('packingLine returns null for a vendor with no fee configured', () => {
@@ -805,8 +809,55 @@ test('a PO built from string-typed numerics still totals correctly', () => {
 
   assert.equal(typeof d.lines[0].cost, 'number', 'the draft coerces on the way in');
   assert.equal(d.subtotal, 628, '10 x (58.80 goods + 4.00 packing)');
-  assert.equal(d.tax, 61.23);
-  assert.equal(d.total, 689.23);
+  assert.equal(d.tax, 57.33, '9.75% of the $588 of goods — the $40 of packing is untaxed');
+  assert.equal(d.total, 685.33);
+});
+
+// ---- tax falls on the goods, not on the service ----
+//
+// Reproduced from the distributors' own invoices, which is the only authority
+// that settles it. Both of these are Bingo Vision, August 2026.
+test('Bingo Vision 1806006 reproduces line for line', () => {
+  const V = [{ id: 'bv', name: 'Bingo Vision', email: 'a@x.test', contact_name: 'S',
+               tax_rate: '0.0975', packing_fee: '4.00' }];
+  // ten strip titles, 80 deals each at $64.60, collated at $2.00 a deal
+  const P = Array.from({ length: 10 }, (_, i) => ({
+    id: `T${i}`, vendor_id: 'bv', name: `Tote title ${i}`, type: 'strip',
+    base_cost: '64.60', pack_units: 80, packing_units: 80, packing_rate: '2.00',
+    split_boxes: 16, cost: '5168.00', price_per_ticket: '1.00',
+  }));
+  const [d] = buildDrafts(Object.fromEntries(P.map((p) => [p.id, 1])), P, V);
+
+  assert.equal(d.goods, 51680, 'ten lines at $5,168');
+  assert.equal(d.packing, 1600, 'STRIP COLLATION SERVICE, 800 deals at $2.00');
+  assert.equal(d.subtotal, 53280);
+  assert.equal(d.tax, 5038.80, 'as printed — 9.75% of the goods, not of the subtotal');
+  assert.equal(d.total, 58318.80);
+});
+
+test('a strip tote is collated at $2 a deal, not packed at the flash $4', () => {
+  const V = [{ id: 'bv', name: 'Bingo Vision', email: 'a@x.test', contact_name: 'S',
+               tax_rate: '0.0975', packing_fee: '4.00' }];
+  const P = [
+    { id: 'T', vendor_id: 'bv', name: 'Biker tote', type: 'strip', base_cost: '64.60',
+      pack_units: 80, packing_units: 80, packing_rate: '2.00', split_boxes: 16,
+      cost: '5168.00', price_per_ticket: '1.00' },
+    { id: 'F', vendor_id: 'bv', name: 'Some flash', type: 'flash', base_cost: '58.80',
+      pack_units: 1, packing_units: 1, split_boxes: 1, cost: '58.80', price_per_ticket: '1.00' },
+  ];
+  const [d] = buildDrafts({ T: 1, F: 1 }, P, V);
+  const by = Object.fromEntries(d.lines.map((l) => [l.product_id, l.packing_each]));
+  assert.equal(by.T, 160, '80 deals x $2.00');
+  assert.equal(by.F, 4, 'the flash box still takes the vendor rate');
+});
+
+test('a packing rate of 0 is an answer, not a missing value', () => {
+  const V = [{ id: 'bv', name: 'Bingo Vision', email: 'a@x.test', contact_name: 'S',
+               tax_rate: '0.0975', packing_fee: '4.00' }];
+  const free = { base_cost: 58.8, pack_units: 1, packing_units: 1, packing_rate: 0 };
+  assert.equal(packingFor(free, V[0]), 0, 'pinned to free, not fallen through to $4');
+  const unset = { base_cost: 58.8, pack_units: 1, packing_units: 1, packing_rate: null };
+  assert.equal(packingFor(unset, V[0]), 4, 'null means use the distributor rate');
 });
 
 test('the printed subtotal equals the printed lines', () => {

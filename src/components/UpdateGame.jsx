@@ -33,6 +33,9 @@ export default function UpdateGame({ product, onClose }) {
     price_per_ticket: String(ticketPrice(product)),
     active: product.active !== false,
     packing_units: String(Number(product.packing_units) || 0),
+    // blank means "use the distributor's rate" — 0 is a different, real answer
+    packing_rate: product.packing_rate == null || product.packing_rate === ''
+      ? '' : String(Number(product.packing_rate)),
   });
   const [saving, setSaving] = useState(false);
   const [asking, setAsking] = useState(false);
@@ -42,6 +45,8 @@ export default function UpdateGame({ product, onClose }) {
   const vendorName = vendors.find((v) => v.id === product.vendor_id)?.name || '';
   // only worth showing where the distributor actually charges packing
   const packFee = Number(vendors.find((v) => v.id === f.vendor_id)?.packing_fee) || 0;
+  // what the box will actually be charged at once this form is saved
+  const effPackRate = f.packing_rate.trim() === '' ? packFee : (parseFloat(f.packing_rate) || 0);
   // a mixed pack or a cherry case has no single ticket count to ask for
   const wantsTickets = f.type === 'flash' && !isMisc(product) && !isGrabBag(product);
 
@@ -81,6 +86,11 @@ export default function UpdateGame({ product, onClose }) {
     if (admin && f.active !== (product.active !== false)) out.active = f.active;
     const pu = Math.max(0, parseInt(f.packing_units) || 0);
     if (admin && pu !== (Number(product.packing_units) || 0)) out.packing_units = pu;
+    // '' clears the override back to the distributor's rate; 0 pins it to free
+    const pr = f.packing_rate.trim() === '' ? null : Math.max(0, parseFloat(f.packing_rate) || 0);
+    const wasPr = product.packing_rate == null || product.packing_rate === ''
+      ? null : Number(product.packing_rate);
+    if (admin && pr !== wasPr) out.packing_rate = pr;
     return out;
   };
 
@@ -184,15 +194,23 @@ export default function UpdateGame({ product, onClose }) {
         </div>
 
         {admin && packFee > 0 && (
-          <div className="field"><label>Packing units per box</label>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div className="field"><label>Packing / collation</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <input className="num" type="number" min="0" value={f.packing_units}
                 onChange={(e) => set('packing_units', e.target.value)} style={{ width: 90 }} />
+              <span className="dimmer" style={{ fontSize: 11.5 }}>units per box &nbsp;×&nbsp;</span>
+              <input className="num" type="number" min="0" step="0.01" value={f.packing_rate}
+                placeholder={String(packFee)} onChange={(e) => set('packing_rate', e.target.value)}
+                style={{ width: 90 }} />
               <span className="dimmer" style={{ fontSize: 11.5 }}>
-                {vendorName} charges {fmtMoney(packFee)} per unit — this box would add{' '}
-                <b>{fmtMoney(packFee * (parseInt(f.packing_units) || 0))}</b>. Flash is 1, a 10-pack case is 80,
-                an ordinary strip is 0.
+                per unit — adds <b>{fmtMoney(effPackRate * (parseInt(f.packing_units) || 0))}</b> to this box.
               </span>
+            </div>
+            <div className="dimmer" style={{ fontSize: 11, marginTop: 4 }}>
+              Flash is 1 unit, an ordinary strip is 0, a 10-pack case is 80. Leave the rate blank to use{' '}
+              {vendorName}'s {fmtMoney(packFee)}; Bingo Vision bills {fmtMoney(4)} a box to pack flash but only{' '}
+              {fmtMoney(2)} a deal to collate strips, so the tote products override it.
+              {' '}Packing is not taxed.
             </div>
           </div>
         )}
@@ -206,7 +224,9 @@ export default function UpdateGame({ product, onClose }) {
 
         {(parseFloat(f.cost) > 0) && (() => {
           const pp = priceParts({ ...product, base_cost: parseFloat(f.cost) || 0, pack_units: parseInt(f.pack_units) || 1,
-                                  packing_units: parseInt(f.packing_units) || 0 }, vendors.find((v) => v.id === f.vendor_id));
+                                  packing_units: parseInt(f.packing_units) || 0,
+                                  packing_rate: f.packing_rate.trim() === '' ? null : parseFloat(f.packing_rate) || 0 },
+                                vendors.find((v) => v.id === f.vendor_id));
           return (
             <div className="card pad" style={{ marginTop: 4, marginBottom: 4, background: 'var(--bg)' }}>
               <div className="mono" style={{ fontSize: 13 }}>

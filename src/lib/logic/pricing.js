@@ -21,9 +21,25 @@ export const baseCost = (p) =>
 /** What the vendor invoices for one box. */
 export const boxCost = (p) => round2(baseCost(p) * packUnits(p));
 
-/** Packing on one box of this product, at this vendor's rate. */
+/**
+ * The rate charged per packed unit. Usually the vendor's, but a product may
+ * override it, because one vendor can charge two different rates: Bingo Vision
+ * bills $4.00 a box to pack flash and $2.00 a deal to collate strips. Invoice
+ * 1806006 is 800 deals of collation at $2.00 = $1,600; 1806034 carries $672.00,
+ * which is 168 boxes at $4.00. One vendor-level number cannot say both.
+ *
+ * 0 is a real answer (a vendor who packs free), so only null/undefined/'' falls
+ * through to the vendor.
+ */
+export const packingRate = (p, vendor) => {
+  const own = p?.packing_rate;
+  if (own !== null && own !== undefined && own !== '') return Number(own) || 0;
+  return Number(vendor?.packing_fee) || 0;
+};
+
+/** Packing on one box of this product, at whichever rate applies. */
 export const packingFor = (p, vendor) =>
-  round2((Number(vendor?.packing_fee) || 0) * (Number(p?.packing_units) || 0));
+  round2(packingRate(p, vendor) * (Number(p?.packing_units) || 0));
 
 /** Box cost plus its packing — what a box actually costs to have on the shelf. */
 export const allInCost = (p, vendor) => round2(boxCost(p) + packingFor(p, vendor));

@@ -119,6 +119,16 @@ const pick = (text, key) => {
   return v || PO_TEXT_DEFAULTS[key];
 };
 
+/**
+ * "Tax (9.75%)" normally, "Tax (9.75% on stock)" once packing is in the mix.
+ *
+ * Without the qualifier the figure looks like an arithmetic error to anyone
+ * checking it against the subtotal, because it no longer is that percentage of
+ * the subtotal — packing and collation are a service and aren't taxed.
+ */
+const taxLabel = (vendor, anyPacking) =>
+  `Tax (${(Number(vendor?.tax_rate) * 100 || 0).toFixed(2)}%${anyPacking ? ' on stock' : ''}):`;
+
 function poBody(po, vendor, hallName, hallAddress, sender, text = {}) {
   // hallAddress may be a plain string or a resolver, because a hall can send
   // different vendors to different doors (see logic/halls.js)
@@ -153,10 +163,10 @@ function poBody(po, vendor, hallName, hallAddress, sender, text = {}) {
     anyPacking ? `  ${'Stock:'.padEnd(20)}${fmtMoney(goodsTotal).padStart(12)}` : null,
     anyPacking ? `  ${'Packing:'.padEnd(20)}${fmtMoney(packingTotal).padStart(12)}` : null,
     `  ${'Subtotal:'.padEnd(20)}${fmtMoney(po.subtotal).padStart(12)}`,
-    `  ${`Tax (${(vendor.tax_rate * 100).toFixed(2)}%):`.padEnd(20)}${fmtMoney(po.tax).padStart(12)}`,
+    `  ${taxLabel(vendor, anyPacking).padEnd(20)}${fmtMoney(po.tax).padStart(12)}`,
     `  ${'Total:'.padEnd(20)}${fmtMoney(po.total).padStart(12)}`,
     n ? `  (covers the priced lines only — the "?" items are on top of this)` : null,
-    anyPacking ? `  Packing is included in each line above, not added separately.` : null,
+    anyPacking ? `  Packing is included in each line above, not added separately, and is not taxed.` : null,
     ``,
     address ? `Please deliver to:\n${address}\n` : null,
     fill(pick(text, 'closing'), vars),
@@ -267,11 +277,11 @@ ${extra ? `<p>${esc(fill(extra, vars))}</p>` : ''}
 ${anyPacking ? totalRow('Stock', fmtMoney(goodsTotal)) : ''}
 ${anyPacking ? totalRow('Packing', fmtMoney(packingTotal)) : ''}
 ${totalRow('Subtotal', fmtMoney(po.subtotal))}
-${totalRow(`Tax (${(vendor.tax_rate * 100).toFixed(2)}%)`, fmtMoney(po.tax))}
+${totalRow(taxLabel(vendor, anyPacking).replace(/:$/, ''), fmtMoney(po.tax))}
 ${totalRow('Total', fmtMoney(po.total), 'grand')}
 </tbody></table>
 ${n ? `<p class="foot">Covers the priced lines only — the &ldquo;?&rdquo; items are on top of this.</p>` : ''}
-${anyPacking ? `<p class="foot">Packing is included in each line above, not added separately.</p>` : ''}
+${anyPacking ? `<p class="foot">Packing is included in each line above, not added separately, and is not taxed.</p>` : ''}
 ${address ? `<div class="addr"><strong>Please deliver to:</strong><br>${esc(address).replace(/\n/g, '<br>')}</div>` : ''}
 <p>${esc(fill(pick(text, 'closing'), vars))}</p>
 <p class="foot">Ordered ${esc(date)}.</p>

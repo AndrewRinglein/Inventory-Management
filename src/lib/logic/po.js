@@ -32,7 +32,16 @@ export function lineName(product) {
 
 /**
  * Totals for one vendor's lines.
- * lines: [{qty, cost, price_tbd}] → { subtotal, tax, total, tbd, partial }.
+ * lines: [{qty, cost, packing_each, price_tbd}]
+ *   → { goods, packing, subtotal, taxable, tax, total, tbd, partial }.
+ *
+ * TAX FALLS ON THE GOODS ONLY. Packing and strip collation are a service, and
+ * California does not tax them here — the distributors' own invoices are the
+ * proof. Bingo Vision 1806006: ten strip lines at $5,168 = $51,680 of goods plus
+ * $1,600 of collation makes a $53,280 subtotal, and the tax charged is $5,038.80,
+ * which is 9.75% of $51,680 and not of $53,280. Same on 1806034, where backing
+ * $3,229.16 out at 9.75% leaves exactly $672.00 of the $33,791.60 untaxed.
+ * Taxing the whole subtotal overstated every Bingo Vision order.
  *
  * A line whose price we don't have yet contributes nothing to the money. That
  * makes the printed total a floor, not the bill — `partial` says so, and every
@@ -41,12 +50,16 @@ export function lineName(product) {
  */
 export function poTotals(lines, taxRate) {
   const priced = lines.filter((l) => !l.price_tbd);
-  // packing rides on the line that earned it, so it is part of that line's money
-  const subtotal = round2(priced.reduce(
-    (a, l) => a + l.qty * ((Number(l.cost) || 0) + (Number(l.packing_each) || 0)), 0));
-  const tax = round2(subtotal * (taxRate || 0));
+  const goods = sumMoney(priced, (l) => l.qty * (Number(l.cost) || 0));
+  // packing rides on the line that earned it, so it still shows in that line's money
+  const packing = sumMoney(priced, (l) => l.qty * (Number(l.packing_each) || 0));
+  const subtotal = round2(goods + packing);
+  const tax = round2(goods * (taxRate || 0));
   const tbd = lines.filter((l) => l.price_tbd).length;
-  return { subtotal, tax, total: round2(subtotal + tax), tbd, partial: tbd > 0 };
+  return {
+    goods, packing, subtotal, taxable: goods, tax,
+    total: round2(subtotal + tax), tbd, partial: tbd > 0,
+  };
 }
 
 export const VENDOR_CODES = { bv: 'BV', md: 'MD', cbs: 'CBS', pbf: 'PBF' };
