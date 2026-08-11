@@ -3,6 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- The asset filenames are content-hashed and safe to cache forever; this page is
+       not. Cached, it keeps pointing at hashed files that a later deploy removed. -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
   <title>Bingo Inventory &amp; Ordering</title>
   <!-- Fonts load non-blocking: the app must start even if Google Fonts is slow,
        blocked by a firewall, or the hall's internet is flaky. CSS has system fallbacks. -->
@@ -10,8 +14,8 @@
   <link rel="stylesheet" media="print" onload="this.media='all'"
         href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap">
   <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap"></noscript>
-  <script type="module" crossorigin src="/Inventory-Management/assets/index-IJLnEwXp.js"></script>
-  <link rel="stylesheet" crossorigin href="/Inventory-Management/assets/index-D1RZh48d.css">
+  <script type="module" crossorigin src="/Inventory-Management/assets/index-Dzdn39x7.js"></script>
+  <link rel="stylesheet" crossorigin href="/Inventory-Management/assets/index-Bl6NPabW.css">
 </head>
 <body>
   <div id="root"></div>
