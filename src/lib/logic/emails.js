@@ -126,8 +126,8 @@ const pick = (text, key) => {
  * checking it against the subtotal, because it no longer is that percentage of
  * the subtotal — packing and collation are a service and aren't taxed.
  */
-const taxLabel = (vendor, anyPacking) =>
-  `Tax (${(Number(vendor?.tax_rate) * 100 || 0).toFixed(2)}%${anyPacking ? ' on stock' : ''}):`;
+const taxLabel = (vendor, qualify) =>
+  `Tax (${(Number(vendor?.tax_rate) * 100 || 0).toFixed(2)}%${qualify ? ' on taxable stock' : ''}):`;
 
 function poBody(po, vendor, hallName, hallAddress, sender, text = {}) {
   // hallAddress may be a plain string or a resolver, because a hall can send
@@ -143,6 +143,11 @@ function poBody(po, vendor, hallName, hallAddress, sender, text = {}) {
   const priced = po.lines.filter((l) => !l.price_tbd);
   const goodsTotal = priced.reduce((a, l) => a + l.qty * Number(l.cost), 0);
   const packingTotal = priced.reduce((a, l) => a + l.qty * (Number(l.packing_each) || 0), 0);
+  const exemptTotal = priced.filter((l) => l.taxable === false)
+    .reduce((a, l) => a + l.qty * Number(l.cost), 0);
+  // the tax stops being a checkable percentage of the subtotal once either of
+  // these is in play, so the label has to say what it IS a percentage of
+  const qualifyTax = anyPacking || exemptTotal > 0;
   const vars = { hall: hallName, po: po.num, vendor: vendor.name, date };
   const extra = (text?.note ?? '').trim();
   return [
@@ -162,8 +167,9 @@ function poBody(po, vendor, hallName, hallAddress, sender, text = {}) {
     // split the subtotal so both sides can see what was goods and what was packing
     anyPacking ? `  ${'Stock:'.padEnd(20)}${fmtMoney(goodsTotal).padStart(12)}` : null,
     anyPacking ? `  ${'Packing:'.padEnd(20)}${fmtMoney(packingTotal).padStart(12)}` : null,
+    exemptTotal > 0 ? `  ${'Of which exempt:'.padEnd(20)}${fmtMoney(exemptTotal).padStart(12)}` : null,
     `  ${'Subtotal:'.padEnd(20)}${fmtMoney(po.subtotal).padStart(12)}`,
-    `  ${taxLabel(vendor, anyPacking).padEnd(20)}${fmtMoney(po.tax).padStart(12)}`,
+    `  ${taxLabel(vendor, qualifyTax).padEnd(20)}${fmtMoney(po.tax).padStart(12)}`,
     `  ${'Total:'.padEnd(20)}${fmtMoney(po.total).padStart(12)}`,
     n ? `  (covers the priced lines only — the "?" items are on top of this)` : null,
     anyPacking ? `  Packing is included in each line above, not added separately, and is not taxed.` : null,
@@ -235,6 +241,11 @@ function poHtml(po, vendor, hallName, hallAddress, sender, text = {}) {
   const priced = po.lines.filter((l) => !l.price_tbd);
   const goodsTotal = priced.reduce((a, l) => a + l.qty * Number(l.cost), 0);
   const packingTotal = priced.reduce((a, l) => a + l.qty * (Number(l.packing_each) || 0), 0);
+  const exemptTotal = priced.filter((l) => l.taxable === false)
+    .reduce((a, l) => a + l.qty * Number(l.cost), 0);
+  // the tax stops being a checkable percentage of the subtotal once either of
+  // these is in play, so the label has to say what it IS a percentage of
+  const qualifyTax = anyPacking || exemptTotal > 0;
 
   const row = (l) => {
     const packEach = Number(l.packing_each) || 0;
@@ -276,8 +287,9 @@ ${extra ? `<p>${esc(fill(extra, vars))}</p>` : ''}
 <table class="totals" role="presentation"><tbody>
 ${anyPacking ? totalRow('Stock', fmtMoney(goodsTotal)) : ''}
 ${anyPacking ? totalRow('Packing', fmtMoney(packingTotal)) : ''}
+${exemptTotal > 0 ? totalRow('Of which exempt', fmtMoney(exemptTotal)) : ''}
 ${totalRow('Subtotal', fmtMoney(po.subtotal))}
-${totalRow(taxLabel(vendor, anyPacking).replace(/:$/, ''), fmtMoney(po.tax))}
+${totalRow(taxLabel(vendor, qualifyTax).replace(/:$/, ''), fmtMoney(po.tax))}
 ${totalRow('Total', fmtMoney(po.total), 'grand')}
 </tbody></table>
 ${n ? `<p class="foot">Covers the priced lines only — the &ldquo;?&rdquo; items are on top of this.</p>` : ''}

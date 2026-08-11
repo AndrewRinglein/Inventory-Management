@@ -851,6 +851,50 @@ test('a strip tote is collated at $2 a deal, not packed at the flash $4', () => 
   assert.equal(by.F, 4, 'the flash box still takes the vendor rate');
 });
 
+test('Marathon 5812098 and 5812121 reproduce — games taxed, daubers not', () => {
+  const V = [{ id: 'md', name: 'Marathon', email: 'a@x.test', contact_name: 'E',
+               tax_rate: '0.0975', packing_fee: '0' }];
+  const games = [
+    { id: 'G1', vendor_id: 'md', name: 'Rags to Riches $2', type: 'flash', base_cost: '209.00',
+      pack_units: 1, packing_units: 0, split_boxes: 1, cost: '209.00', price_per_ticket: '2.00' },
+    { id: 'G2', vendor_id: 'md', name: 'Cats & Dogs', type: 'flash', base_cost: '280.00',
+      pack_units: 1, packing_units: 0, split_boxes: 1, cost: '280.00', price_per_ticket: '2.00' },
+    { id: 'G3', vendor_id: 'md', name: 'Lucky Bucks', type: 'flash', base_cost: '280.00',
+      pack_units: 1, packing_units: 0, split_boxes: 1, cost: '280.00', price_per_ticket: '2.00' },
+  ];
+  // 2 x 209 + 209 + 209 + 280 + 280 = 1396.00, tax 136.11 as printed
+  const [g] = buildDrafts({ G1: 4, G2: 1, G3: 1 }, games, V);
+  assert.equal(g.goods, 1396, 'the printed net');
+  assert.equal(g.tax, 136.11, 'the printed tax');
+  assert.equal(g.total, 1532.11, 'the printed balance due');
+
+  const daubers = [{ id: 'D', vendor_id: 'md', name: 'Sunsational 4oz', type: 'supply',
+    base_cost: '19.50', pack_units: 1, packing_units: 0, split_boxes: 1,
+    cost: '19.50', price_per_ticket: '1.00', taxable: false }];
+  const [d] = buildDrafts({ D: 10 }, daubers, V);
+  assert.equal(d.goods, 195);
+  assert.equal(d.tax, 0, 'no tax line on 5812121');
+  assert.equal(d.total, 195);
+});
+
+test('an exempt line does not drag the taxable ones out of tax', () => {
+  const V = [{ id: 'md', name: 'Marathon', email: 'a@x.test', contact_name: 'E',
+               tax_rate: '0.10', packing_fee: '0' }];
+  const P = [
+    { id: 'G', vendor_id: 'md', name: 'A game', type: 'flash', base_cost: '100',
+      pack_units: 1, packing_units: 0, split_boxes: 1, cost: '100', price_per_ticket: '1' },
+    { id: 'D', vendor_id: 'md', name: 'A dauber', type: 'supply', base_cost: '50',
+      pack_units: 1, packing_units: 0, split_boxes: 1, cost: '50', price_per_ticket: '1',
+      taxable: false },
+  ];
+  const [d] = buildDrafts({ G: 1, D: 1 }, P, V);
+  assert.equal(d.goods, 150);
+  assert.equal(d.taxable, 100);
+  assert.equal(d.exempt, 50);
+  assert.equal(d.tax, 10, 'ten percent of the game only');
+  assert.equal(d.total, 160);
+});
+
 test('a packing rate of 0 is an answer, not a missing value', () => {
   const V = [{ id: 'bv', name: 'Bingo Vision', email: 'a@x.test', contact_name: 'S',
                tax_rate: '0.0975', packing_fee: '4.00' }];

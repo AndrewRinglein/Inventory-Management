@@ -54,10 +54,18 @@ export function poTotals(lines, taxRate) {
   // packing rides on the line that earned it, so it still shows in that line's money
   const packing = sumMoney(priced, (l) => l.qty * (Number(l.packing_each) || 0));
   const subtotal = round2(goods + packing);
-  const tax = round2(goods * (taxRate || 0));
+  // ...and some GOODS are exempt too. Marathon billed us twice on 08/07/2026:
+  // 5812098, all games, $1,396.00 net and $136.11 tax — 9.75% exactly. 5812121,
+  // all daubers, $987.00 net and no tax line at all. Daubers are bought for
+  // resale to players; the games are not. So exemption is a property of the
+  // product, not of the distributor.
+  const taxableGoods = sumMoney(
+    priced.filter((l) => l.taxable !== false), (l) => l.qty * (Number(l.cost) || 0));
+  const tax = round2(taxableGoods * (taxRate || 0));
   const tbd = lines.filter((l) => l.price_tbd).length;
   return {
-    goods, packing, subtotal, taxable: goods, tax,
+    goods, packing, subtotal, taxable: taxableGoods, tax,
+    exempt: round2(goods - taxableGoods),
     total: round2(subtotal + tax), tbd, partial: tbd > 0,
   };
 }
@@ -107,6 +115,8 @@ export function buildDrafts(qty, products, vendors) {
       // one ordered unit can arrive as several inventory boxes, each worth a share
       split_boxes: Math.max(1, parseInt(p.split_boxes) || 1),
       per_box_cost: perBoxValue(p),
+      // supplies are resold to players, so they come to us exempt (see poTotals)
+      taxable: p.taxable !== false,
     });
   }
   return Object.entries(byVendor).map(([vendorId, rawLines]) => {
