@@ -46,3 +46,27 @@ update products p set vendor_sku = v.sku from (values
  ('P244','TP5213KR'),('P236','TP4749BR'),('P256','TP8010RR'),
  ('P202','TP7737Q'),('P227','TP7858V')
 ) as v(id,sku) where p.id = v.id;
+
+-- All five August deliveries are now recorded against Santa Clara:
+--
+--   SC-2026-08-BV-001   BV 1806034   $37,020.76   313 boxes
+--   SC-2026-08-BV-002   BV 1806006   $58,318.80   160 totes  (see assumption below)
+--   SC-2026-08-MD-001   MD 5812098    $1,532.11     6 boxes
+--   SC-2026-08-MD-002   MD 5812121      $987.00     1 line   (see assumption below)
+--   SC-2026-08-PBF-001  PBF 44971     $6,740.41   120 boxes
+--                                   -----------
+--                                   $104,599.08   600 boxes added
+--
+-- Two assumptions are carried in the delivery notes so they are visible in the
+-- app rather than only here:
+--
+-- 1806006 — the invoice does not say which day-group each of the ten Biker
+-- titles belongs to, so all ten units are booked to P163 (Fri/Sun/Mon). The
+-- money is right regardless; only the shelf is a guess.
+--
+-- 5812121 — the dauber quantities are not legible, so the order sits as one
+-- line at its full $987.00 rather than as invented per-colour counts. Split it
+-- across S830/S831/S832 when the quantities are known.
+--
+-- Activity rows (po.record, delivery.add) were backfilled for all five so the
+-- history reads the same as if they had been entered through the app.
