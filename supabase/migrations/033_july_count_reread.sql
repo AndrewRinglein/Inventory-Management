@@ -33,3 +33,24 @@
 -- the table. Marathon's total agrees to the cent.
 --
 -- Applied directly to the live database; kept here as the record. Do not re-run.
+
+-- CORRECTION, per Angela: on the inventory sheet the count IS the countable unit
+-- — packs for strips, totes for Biker — with no deal multiplier. The sheet's
+-- dollar column multiplies by deals; ignore it for valuation.
+--
+-- So every strip and tote from the July count is worth perBoxValue, the same
+-- figure the app uses everywhere else:  base_cost x pack_units / split_boxes.
+-- A lettered pack is $64.60. A Biker tote is 64.60 x 80 / 16 = $323.00.
+--
+-- This supersedes fault 2 above: the Marathon "180x8" cases go back to $64 a
+-- pack. Boxes from the August invoices already carry perBoxValue and are not
+-- touched — deals are stated explicitly there, so no inference is involved.
+--
+-- Santa Clara opening stock: $106,496.25. Live inventory: 1,650 boxes,
+-- $199,699.65.
+
+update boxes b
+   set cost = round(p.base_cost * greatest(p.pack_units,1) / greatest(p.split_boxes,1), 2)
+  from products p
+ where b.product_id = p.id and p.type = 'strip'
+   and b.hall_id = 'sc' and b.po_id is null and b.delivery_id is null;
