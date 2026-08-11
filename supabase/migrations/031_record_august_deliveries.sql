@@ -40,3 +40,9 @@ insert into products
 values
   ('C865','bv','GRASSHOPPER','GRASSHOPPER 1260/$1','AN6268J','flash',74.10,1,1,1,'box',1260,1.00,true)
 on conflict (id) do nothing;
+
+-- Marathon prints item codes too (invoice 5812098, page 1 of 1).
+update products p set vendor_sku = v.sku from (values
+ ('P244','TP5213KR'),('P236','TP4749BR'),('P256','TP8010RR'),
+ ('P202','TP7737Q'),('P227','TP7858V')
+) as v(id,sku) where p.id = v.id;
