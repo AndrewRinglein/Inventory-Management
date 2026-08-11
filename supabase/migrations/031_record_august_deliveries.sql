@@ -10,11 +10,18 @@
 --   SC-2026-08-MD-001  Marathon 5812098       5 lines
 --                      goods 1,396.00  tax 136.11  total 1,532.11   6 boxes
 --
+--   SC-2026-08-PBF-001 Pacific Gaming / Pollard 44971   13 lines, 120 boxes
+--                      goods 6,141.60  tax 598.81  total 6,740.41
+--                      A PACKING SLIP, not an invoice: quantities only, no prices
+--                      anywhere on it. Every figure above is catalog-derived and
+--                      the tax is the standard rate rather than one they billed.
+--                      Cosmic has no catalog price, so its 18 boxes sit at zero
+--                      and the line is flagged price_tbd.
+--
 -- Not entered, and why:
 --   Bingo Vision 1806006   the ten Biker titles need allocating across the four
 --                          day-group tote products before the count can be right
 --   Marathon 5812121       quantities not legible
---   Pacific Gaming 44971   line items not captured
 --
 -- Hold Your Horses is split in 030/031: the 1080-ticket one keeps P069 as SMALL
 -- BALL, and the 1920-ticket one the invoice sells at $112.90 becomes C864 BALL.
