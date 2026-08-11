@@ -10,12 +10,12 @@ const HALL = { sc: 'Santa Clara', rwc: 'Redwood City' };
 /**
  * Record a delivery that arrived, with or without a purchase order behind it.
  *
- * The PO reference has three shapes and they are not the same thing. One of ours
+ * The PO reference has four shapes and they are not the same thing. One of ours
  * means the boxes it already put on order are the ones arriving, so they get
  * received rather than duplicated. A number typed by hand means the order exists
- * on paper somewhere else. Pre-PO means the stock predates this system and there
- * is no order to find — saying so is more useful than leaving the field blank and
- * wondering later.
+ * on paper somewhere else. Pre-PO-System means the stock predates this app and
+ * there is no order to find. None means there genuinely wasn't one. Recording
+ * which is more useful than leaving the field blank and wondering later.
  */
 export default function AddDelivery({ onClose }) {
   const { hall, products, vendors, boxes, pos, store, reloadHall, setToast } = useContext(AppCtx);
@@ -78,7 +78,7 @@ export default function AddDelivery({ onClose }) {
     return a + l.qty * (p ? perBoxValue(p) : 0);
   }, 0);
 
-  const poRef = poMode === 'prepo' ? 'PRE-PO'
+  const poRef = poMode === 'prepo' ? 'PRE-PO-SYSTEM'
     : poMode === 'typed' ? poTyped.trim()
     : poMode === 'ours' ? (pos.find((p) => p.id === poId)?.num || '')
     : '';
@@ -145,7 +145,7 @@ export default function AddDelivery({ onClose }) {
             {[
               ['ours', 'One of ours'],
               ['typed', 'A PO number from elsewhere'],
-              ['prepo', 'Pre-PO — before this system'],
+              ['prepo', 'Pre-PO-System'],
               ['none', 'No PO at all'],
             ].map(([k, label]) => (
               <label key={k} style={{ display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}>
@@ -184,8 +184,9 @@ export default function AddDelivery({ onClose }) {
           )}
           {poMode === 'prepo' && (
             <div className="dimmer" style={{ fontSize: 11.5, marginTop: 6 }}>
-              Recorded as <span className="mono">PRE-PO</span> — stock that arrived before this system
-              was tracking orders. It counts into inventory the same way; it just has no order to reconcile against.
+              Recorded as <span className="mono">PRE-PO-SYSTEM</span> — stock that arrived before this
+              system was tracking orders. It counts into inventory exactly the same way; it just has no
+              order to reconcile against, and saying so is more useful than leaving the field blank.
             </div>
           )}
         </div>
