@@ -1,0 +1,35 @@
+-- Re-reading the July 2026 Santa Clara inventory count, after it was queried.
+--
+-- Three separate faults, all in the original import, all understating stock.
+--
+-- 1. TEXT-TYPED COUNTS WERE SKIPPED. 25 Bingo Vision rows carry their count as a
+--    text cell rather than a number ('38', '.5', '1.33'). The import only read
+--    numeric cells, so it dropped every one — 174 units, $77,733.91, including
+--    BOTH Biker tote lines (38 and 40 totes) and every lettered strip pack:
+--    Monopoly, American Heroes, Bingo Shark, Broadway, Whole Enchiladas, Fiesta,
+--    Sheva, Wabbit Twack, the Double Action and Neon paper, and six part-cases of
+--    cherry tickets. This is the big one.
+--
+-- 2. STRIP CASES WERE VALUED AS SINGLE PACKS. The sheet writes "Big Cheese
+--    180x8", count 1, $512 — one case of 8 packs at $64. The import stored one
+--    box at $64. 21 Marathon rows, $17,684 understated.
+--
+-- 3. PART-CASES WERE ROUNDED AWAY. Three Marathon rows at 0.5 / 0.25 / 0.5 of a
+--    case ($381.75) vanished. Half a case is still stock; each is carried as one
+--    box at the value of the part held.
+--
+-- And one overstatement, found on the way: Pollard's six "Guarantee 6/210" games
+-- were in the catalog at $60.00 against the sheet's $10.00, inflating Santa Clara
+-- by exactly $4,900.
+--
+-- Each block now equals the sheet's own row arithmetic:
+--
+--   Bingo Vision   $122,334.89     Marathon $39,759.75     Pollard $5,763.61
+--
+-- Two of those disagree with the TOTAL cell printed on the sheet, and the sheet
+-- is wrong, not us: its Bingo Vision total (119,040.29) omits the last row,
+-- "Premium Misc packs" $3,294.60, and its Pacific total (5,491.45) omits the
+-- first row, "3X Lucky" $272.16. Both look like a SUM range that never grew with
+-- the table. Marathon's total agrees to the cent.
+--
+-- Applied directly to the live database; kept here as the record. Do not re-run.
