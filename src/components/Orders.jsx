@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
 import { fmtMoney, poFromRecord, repriceFromCatalog } from '../lib/logic/po.js';
-import { buildOrderEmails, senderFor, PO_TEXT_DEFAULTS } from '../lib/logic/emails.js';
+import { buildOrderEmails, poHtml, senderFor, PO_TEXT_DEFAULTS } from '../lib/logic/emails.js';
 import { addressResolver } from '../lib/logic/halls.js';
 
 const HALL_NAMES = { sc: 'Santa Clara', rwc: 'Redwood City' };
@@ -120,6 +120,40 @@ export default function Orders() {
       { ...(settings.po_email || {}), ...resend.text })[0];
   }, [resend, cur, lines, products, vendors, settings, hall, repriced]);   // eslint-disable-line
 
+  /**
+   * Print the PO.
+   *
+   * Same document the distributor gets by email, so the paper on the desk and the
+   * mail in their inbox can never disagree — no second layout to keep in step.
+   * It goes into a hidden iframe rather than a popup because a popup is the first
+   * thing a browser blocks, and a blocked print looks to the user like a button
+   * that does nothing.
+   */
+  const printPo = () => {
+    if (!cur || !lines.length) return;
+    const rec = poFromRecord(cur, lines, products);
+    const html = poHtml(rec, vendorOf(cur), HALL_NAMES[hall],
+      addressResolver(settings.halls_config, hall),
+      senderFor(settings.sender, hall), settings.po_email || {});
+
+    const frame = document.createElement('iframe');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+    frame.onload = () => {
+      try {
+        frame.contentWindow.focus();
+        frame.contentWindow.print();
+      } catch {
+        setToast('Could not open the print dialog');
+      }
+      // outliving the dialog matters — Safari prints an empty sheet if the frame
+      // is torn down while the dialog is still up
+      setTimeout(() => frame.remove(), 60000);
+    };
+    document.body.appendChild(frame);
+    frame.srcdoc = html;
+  };
+
   const doResend = async () => {
     if (busy || !resendEmail) return;
     setBusy(true);
@@ -206,6 +240,10 @@ export default function Orders() {
               {can('receive') && cur.status === 'partial' && (
                 <button className="btn ghost sm" onClick={closeShort}>Close short</button>
               )}
+              <button className="btn ghost sm" disabled={!lines.length} onClick={printPo}
+                title="Print this PO — the same sheet the distributor gets by email">
+                🖨 Print
+              </button>
               {can('send') && (
                 <button className="btn ghost sm" disabled={busy || !lines.length}
                   onClick={() => setResend({ text: {}, reprice: false, tab: 'phone' })}

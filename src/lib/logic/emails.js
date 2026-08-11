@@ -197,6 +197,34 @@ function poBody(po, vendor, hallName, hallAddress, sender, text = {}) {
 const esc = (s) => String(s ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+/**
+ * Print rules for the same document.
+ *
+ * The PO is already a self-contained HTML page, so printing it is a matter of
+ * taking the screen chrome off rather than building a second layout: drop the
+ * grey page background and the card's border and shadow, keep the table from
+ * breaking a row across a page, and repeat the header row on every sheet so page
+ * two is still readable on its own.
+ */
+const PO_PRINT_CSS = `
+  @media print{
+    @page{margin:14mm;}
+    body{background:#fff;}
+    .wrap{max-width:none;margin:0;padding:0;}
+    .card{border:0;border-radius:0;padding:0;box-shadow:none;}
+    table.lines{page-break-inside:auto;}
+    table.lines tr{page-break-inside:avoid;page-break-after:auto;}
+    table.lines thead{display:table-header-group;}
+    table.totals{page-break-inside:avoid;}
+    .hide-sm{display:table-cell !important;}
+    .detail{display:none !important;}
+    a{text-decoration:none;color:inherit;}
+    .print-head{display:block !important;}
+  }
+  .print-head{display:none;border-bottom:2px solid #1d2327;padding-bottom:8px;margin-bottom:16px;}
+  .print-head .t{font-size:19px;font-weight:700;letter-spacing:.02em;}
+  .print-head .m{font-size:12.5px;color:#5c6670;margin-top:3px;}`;
+
 const PO_CSS = `
   body{margin:0;padding:0;background:#f4f5f6;}
   .wrap{max-width:680px;margin:0 auto;padding:20px 16px 32px;}
@@ -229,7 +257,7 @@ const PO_CSS = `
   }
 `;
 
-function poHtml(po, vendor, hallName, hallAddress, sender, text = {}) {
+export function poHtml(po, vendor, hallName, hallAddress, sender, text = {}) {
   const address = typeof hallAddress === 'function' ? hallAddress(vendor.id) : hallAddress;
   const date = new Date(po.sent_at || Date.now()).toLocaleDateString('en-US', {
     month: 'long', day: 'numeric', year: 'numeric',
@@ -271,8 +299,12 @@ function poHtml(po, vendor, hallName, hallAddress, sender, text = {}) {
 
   return `<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(po.num)}</title><style>${PO_CSS}</style></head>
+<title>${esc(po.num)}</title><style>${PO_CSS}${PO_PRINT_CSS}</style></head>
 <body><div class="wrap"><div class="card">
+<div class="print-head">
+  <div class="t">Purchase Order ${esc(po.num)}</div>
+  <div class="m">${esc(hallName)} &nbsp;&middot;&nbsp; ${esc(vendor.name)} &nbsp;&middot;&nbsp; ${esc(date)}</div>
+</div>
 <p>${esc(greet(vendor.contact_name))}</p>
 <p>${esc(fill(pick(text, 'intro'), vars))}</p>
 ${n ? `<p>${esc(fill(pick(text, 'tbdNote'), vars))}</p>` : ''}
