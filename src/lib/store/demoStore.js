@@ -253,10 +253,15 @@ export class DemoStore {
     const tag = `${sess.session_date}${sess.part ? ' ' + sess.part : ''}`;
     const now = new Date().toISOString();
     for (const [pid, n] of Object.entries(want)) {
-      const pool = this.db.boxes.filter((b) => b.hall_id === sess.hall_id
-        && b.product_id === pid && b.state === 'in_inventory').slice(0, n);
+      // opened-on-the-floor boxes are the ones the sheet means; take them first
+      const avail = this.db.boxes.filter((b) => b.hall_id === sess.hall_id
+        && b.product_id === pid && !b.session_id
+        && (b.state === 'opened' || b.state === 'in_inventory'));
+      const pool = [...avail.filter((b) => b.state === 'opened'),
+                    ...avail.filter((b) => b.state === 'in_inventory')].slice(0, n);
       for (const b of pool) {
-        b.state = 'sold_out'; b.session_id = sessionId; b.opened_session = tag;
+        b.state = 'sold_out'; b.session_id = sessionId;
+        b.opened_session = b.opened_session || tag;
         b.opened_at = b.opened_at || now; b.sold_out_at = now;
         moved++;
       }

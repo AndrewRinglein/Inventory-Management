@@ -2,7 +2,9 @@
 
 import { perBoxValue, baseCost, packUnits, packingFor } from './pricing.js';
 
-export const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+// Coerces first. A Postgres numeric arrives as a string, and "58.80" + 4 is
+// "58.804" — arithmetic that looks like arithmetic and silently is not.
+export const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
 // Postgres numeric columns arrive over the wire as STRINGS ("64.60"), so every
 // money helper coerces first. A string has its own toLocaleString that quietly
@@ -12,6 +14,15 @@ export const fmtMoney = (n) =>
 
 /** $ per ticket as a number — same string-from-the-API trap as above. */
 export const ticketPrice = (p) => Number(p?.price_per_ticket) || 1;
+
+/**
+ * Add up a money column. Every numeric in this app can arrive from Postgres as a
+ * string, and `a + b` on a string is concatenation, not addition — a bug that
+ * produces a plausible-looking number rather than an error. Use this instead of
+ * a bare reduce anywhere money is summed.
+ */
+export const sumMoney = (rows, pick = (r) => r) =>
+  round2(rows.reduce((a, r) => a + (Number(pick(r)) || 0), 0));
 
 /** Display name for a PO line: cleaned name + (tickets/$price) so vendors see the full spec. */
 export function lineName(product) {
@@ -31,7 +42,8 @@ export function lineName(product) {
 export function poTotals(lines, taxRate) {
   const priced = lines.filter((l) => !l.price_tbd);
   // packing rides on the line that earned it, so it is part of that line's money
-  const subtotal = round2(priced.reduce((a, l) => a + l.qty * (l.cost + (Number(l.packing_each) || 0)), 0));
+  const subtotal = round2(priced.reduce(
+    (a, l) => a + l.qty * ((Number(l.cost) || 0) + (Number(l.packing_each) || 0)), 0));
   const tax = round2(subtotal * (taxRate || 0));
   const tbd = lines.filter((l) => l.price_tbd).length;
   return { subtotal, tax, total: round2(subtotal + tax), tbd, partial: tbd > 0 };
@@ -70,7 +82,10 @@ export function buildDrafts(qty, products, vendors) {
     if (!p.vendor_id || p.vendor_id === 'unknown') continue;
     (byVendor[p.vendor_id] ||= []).push({
       product_id: pid, name_snapshot: lineName(p), qty: n,
-      cost: Number(p.cost) > 0 ? p.cost : 0,
+      // Number() on the way IN, not just in the test above it. Keeping the raw
+      // string here made poTotals concatenate it against the packing and quietly
+      // drop packing from every subtotal, tax and total.
+      cost: Number(p.cost) > 0 ? Number(p.cost) : 0,
       price_tbd: !(Number(p.cost) > 0),   // ordered before we knew the price
       kind: 'item',
       base_cost: baseCost(p),

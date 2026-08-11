@@ -133,6 +133,7 @@ export default function Orders() {
       setLines(fresh);
       setResend(null);
       setToast(`${cur.num} sent again to ${vendorOf(cur).name}`, null, 6000);
+      setEmails(await store.getEmails(hall).then((all) => all.filter((e) => e.po_num === cur.num)));
     } catch (e) {
       setToast(e.message || 'Could not send that email', null, 8000);
     } finally { setBusy(false); }
@@ -281,6 +282,12 @@ export default function Orders() {
                 <div key={e.id} style={{ fontSize: 12.5, padding: '3px 0' }}>
                   <span className="mono dimmer">{(e.created_at || '').slice(5, 10)}</span> · {e.subject}
                   {e.test_mode && <span className="badge b-gold" style={{ marginLeft: 6, fontSize: 10 }}>test</span>}
+                  {e.status && e.status !== 'sent' && (
+                    <span className="badge" style={{ marginLeft: 6, fontSize: 10, background: '#f6dcd6', color: '#a33b2e' }}
+                      title="This one did not reach the distributor — check the address and resend">
+                      {e.status}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>

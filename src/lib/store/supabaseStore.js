@@ -267,19 +267,35 @@ export class SupabaseStore {
     const short = [];
     let moved = 0, invented = 0;
     for (const [pid, n] of Object.entries(want)) {
-      const pool = ok(await this.sb.from('boxes').select('id')
-        .eq('hall_id', sess.hall_id).eq('product_id', pid).eq('state', 'in_inventory')
-        .order('received_at', { nullsFirst: true }).limit(n));      // oldest first
-      for (const b of pool) {
-        ok(await this.sb.from('boxes').update({ state: 'opened', session_id: sessionId,
-          opened_session: `${sess.session_date}${sess.part ? ' ' + sess.part : ''}` }).eq('id', b.id));
+      // Boxes opened on the floor during play are exactly the ones the count sheet
+      // is reporting, so take those FIRST. Looking only at in_inventory destroyed
+      // untouched shelf stock, invented a shortfall for boxes that were right
+      // there, and left the real ones stuck open forever.
+      const pool = ok(await this.sb.from('boxes').select('id,state')
+        .eq('hall_id', sess.hall_id).eq('product_id', pid)
+        .in('state', ['opened', 'in_inventory'])
+        .is('session_id', null)
+        .order('state', { ascending: true })            // 'in_inventory' < 'opened' alphabetically…
+        .order('received_at', { nullsFirst: true })
+        .limit(n * 2));
+      const ordered = [
+        ...pool.filter((b) => b.state === 'opened'),    // …so re-order explicitly: opened first
+        ...pool.filter((b) => b.state === 'in_inventory'),
+      ].slice(0, n);
+      for (const b of ordered) {
+        if (b.state === 'in_inventory') {
+          ok(await this.sb.from('boxes').update({ state: 'opened', session_id: sessionId,
+            opened_session: `${sess.session_date}${sess.part ? ' ' + sess.part : ''}` }).eq('id', b.id));
+        } else {
+          ok(await this.sb.from('boxes').update({ session_id: sessionId }).eq('id', b.id));
+        }
         ok(await this.sb.from('boxes').update({ state: 'sold_out' }).eq('id', b.id));
         moved++;
       }
       // The sheet says more were played than the shelf held. Record them anyway,
       // marked as never-received, so the session tells the truth and the gap is
       // countable instead of quietly dropped.
-      const gap = n - pool.length;
+      const gap = n - ordered.length;
       if (gap > 0) {
         short.push({ product_id: pid, wanted: n, found: pool.length, invented: gap });
         const p = prods[pid] || {};
@@ -433,7 +449,18 @@ export class SupabaseStore {
       body: { emails: list, hall_id: hallId, settings, sender },
     });
     if (error) throw new Error('send-email failed: ' + error.message);
-    return data.logs;
+    // The function reports per-email status and used to be ignored, so a bounced
+    // address produced a cheerful "delivered to vendors" and a logged email the
+    // vendor never got. Surface the failures; the caller decides what to say.
+    const logs = data.logs || [];
+    const failed = logs.filter((l) => l && l.status !== 'sent');
+    if (failed.length) {
+      const why = failed.map((l) => `${l.to_addr || 'no address'}: ${l.error || 'failed'}`).join('; ');
+      const err = new Error(`${failed.length} of ${logs.length} email(s) did not send — ${why}`);
+      err.partial = { logs, failed };     // some may have gone: don't let the caller resend blindly
+      throw err;
+    }
+    return logs;
   }
   async getEmails(hallId) { return fetchAll(() => this.sb.from('emails').select('*').eq('hall_id', hallId).order('created_at', { ascending: false })); }
 

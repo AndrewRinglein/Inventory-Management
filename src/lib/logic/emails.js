@@ -6,7 +6,7 @@
 // the situation in plain sentences, makes one clear ask, and is signed by a
 // named human (configured in Settings → Sender identity).
 
-import { fmtMoney } from './po.js';
+import { fmtMoney, round2 } from './po.js';
 
 /**
  * Each hall has its own person on the emails (Sagit for SC, Shelly for RWC).
@@ -369,8 +369,13 @@ export function buildPriceRequests(items, vendors, hallName, sender = {}, note =
     ));
 }
 
+// Money here must match what line() prints, which is cost + packing, extended by
+// qty. Summing cost alone told accounting to pay less than the rows above it added
+// up to — and that figure is written straight into payments.amount.
+const lineTotal = (l) => l.qty * ((Number(l.cost) || 0) + (Number(l.packing_each) || 0));
+
 export function buildShortageEmail(po, vendor, hallName, missingLines, sender = {}) {
-  const value = missingLines.reduce((a, l) => a + l.qty * l.cost, 0);
+  const value = round2(missingLines.reduce((a, l) => a + lineTotal(l), 0));
   const n = missingLines.reduce((a, l) => a + l.qty, 0);
   return {
     kind: 'shortage', po_num: po.num, to: vendor.email,
@@ -391,10 +396,10 @@ export function buildShortageEmail(po, vendor, hallName, missingLines, sender = 
 }
 
 export function buildDeliveredEmail(po, vendor, hallName, invoiceNo, receivedLines, missingLines, sender = {}, accountingName = '') {
-  const received = receivedLines.reduce((a, l) => a + l.qty * l.cost, 0);
-  const tax = Math.round(received * vendor.tax_rate * 100) / 100;
-  const owed = Math.round((received + tax) * 100) / 100;
-  const variance = Math.round((po.total - owed) * 100) / 100;
+  const received = round2(receivedLines.reduce((a, l) => a + lineTotal(l), 0));
+  const tax = round2(received * (Number(vendor.tax_rate) || 0));
+  const owed = round2(received + tax);
+  const variance = round2((Number(po.total) || 0) - owed);
   const short = missingLines.length > 0;
 
   return {

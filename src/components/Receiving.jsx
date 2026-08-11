@@ -3,6 +3,7 @@ import { AppCtx } from '../App.jsx';
 import { fmtMoney } from '../lib/logic/po.js';
 import { buildShortageEmail, buildDeliveredEmail, senderFor } from '../lib/logic/emails.js';
 import { needsSetup } from '../lib/logic/setup.js';
+import { splitBoxes } from '../lib/logic/pricing.js';
 import AddDelivery from './AddDelivery.jsx';
 
 const HALL_NAMES = { sc: 'Santa Clara', rwc: 'Redwood City' };
@@ -132,8 +133,9 @@ export default function Receiving() {
       // remaining = ordered minus already-received (for partial second deliveries)
       const rec = {};
       for (const l of ls) {
+        const per = Math.max(1, parseInt(l.split_boxes) || 1);
         const already = boxes.filter((b) => b.po_id === cur.id && b.product_id === l.product_id && b.state !== 'on_order' && b.state !== 'missing').length;
-        rec[l.product_id] = Math.max(0, l.qty - already);
+        rec[l.product_id] = Math.max(0, l.qty * per - already);
       }
       setRecv(rec);
     });
@@ -157,10 +159,24 @@ export default function Receiving() {
   const missingPrices = [...openPriceLines.map((l) => l.product_id), ...openPriceExtras.map((x) => x.product_id)]
     .filter((pid) => !(parseFloat(tbdPrice[pid]) > 0));
 
+  /**
+   * How many INVENTORY UNITS one ordered unit of this line becomes. A PO line is
+   * written in ordered units — one Biker case — but the shelf, the boxes table and
+   * the person counting all work in totes. The line records what the split was at
+   * the time it was sent; the catalog is only a fallback for older lines.
+   */
+  const boxesPerUnit = (l) => Math.max(1,
+    parseInt(l.split_boxes) || splitBoxes(products.find((p) => p.id === l.product_id)) || 1);
+
+  /** Boxes this line still owes, counted the same way the shelf counts them. */
   const remainingFor = (l) => {
     const already = boxes.filter((b) => b.po_id === cur.id && b.product_id === l.product_id && b.state !== 'on_order' && b.state !== 'missing').length;
-    return Math.max(0, l.qty - already);
+    return Math.max(0, l.qty * boxesPerUnit(l) - already);
   };
+
+  /** What one box off this line costs — the ordered-unit price divided by the split. */
+  const perBoxOf = (l, orderedUnitPrice) =>
+    Math.round((Number(orderedUnitPrice) || 0) / boxesPerUnit(l) * 100) / 100;
 
   // role guard AFTER all hooks (react rules) — masters viewing the other hall land here
   if (!can('receive')) {
@@ -238,7 +254,14 @@ export default function Receiving() {
         if (!(price > 0)) continue;
         const p = products.find((x) => x.id === pid);
         if (!p || Number(p.cost) > 0) continue;
-        await store.updateProduct(pid, { cost: Math.round(price * 100) / 100 });
+        // Write base_cost, never cost. A database trigger recomputes
+        // cost = base_cost x pack_units whenever base_cost is set, and every
+        // unpriced product has base_cost 0 — so writing cost alone was undone
+        // in the same statement and the invoice price silently vanished.
+        // The clerk reads an ORDERED-UNIT price off the invoice; base_cost is
+        // per deal, so divide by the deals in a unit.
+        const units = Math.max(1, parseInt(p.pack_units) || 1);
+        await store.updateProduct(pid, { base_cost: Math.round((price / units) * 100) / 100 });
       }
       const paths = [];
       for (const p of pages) paths.push(await store.uploadInvoicePhoto(p));
@@ -254,17 +277,20 @@ export default function Receiving() {
         const serialList = (serials[l.product_id] || '').split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
         // flip boxes on_order -> in_inventory
         const unit = l.price_tbd ? priceOf(l.product_id, l.cost) : l.cost;
+        const perBox = perBoxOf(l, unit);
         const pool = boxes.filter((b) => b.po_id === cur.id && b.product_id === l.product_id && b.state === 'on_order').slice(0, got);
         for (let i = 0; i < pool.length; i++) {
           await store.updateBox(pool[i].id, {
             serial: serialList[i] || '', shipment_id: shipment.id,
-            ...(l.price_tbd ? { cost: unit, price_tbd: false } : {}),
+            // a box carries what ONE box cost, not what the case cost
+            ...(l.price_tbd ? { cost: perBox, price_tbd: false } : {}),
           });
           await store.transitionBox(pool[i].id, 'in_inventory');
         }
-        if (got > 0) receivedLines.push({ ...l, qty: got, cost: unit, price_tbd: false });
+        // the emails talk in boxes, so their arithmetic reads off the page
+        if (got > 0) receivedLines.push({ ...l, qty: got, cost: perBox, price_tbd: false });
         const still = want - got;
-        if (still > 0) missingLines.push({ ...l, qty: still, cost: unit, price_tbd: l.price_tbd && !(unit > 0) });
+        if (still > 0) missingLines.push({ ...l, qty: still, cost: perBox, price_tbd: l.price_tbd && !(unit > 0) });
       }
       // items that arrived but weren't on the PO: create them straight into inventory
       for (const x of extras) {

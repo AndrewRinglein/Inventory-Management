@@ -120,7 +120,8 @@ export default function Review() {
       setScreen('orders');
     } catch (err) {
       if (pos) {
-        setToast(`${pos.length} PO(s) WERE created, but the emails failed: ${err.message}. Find them under Open Orders — do not re-enter the order.`, null, 9000);
+        setToast(`${pos.length} PO(s) WERE created, but the email did not go out: ${err.message}. `
+          + `Find them under Open Orders and use Resend — do not re-enter the order.`, null, 12000);
         setScreen('orders');
       } else {
         setToast((recordedOnly ? 'Could not record that order: ' : 'Send failed: ') + err.message);
@@ -188,7 +189,7 @@ export default function Review() {
                       </td>
                       <td className="r mono last">
                         {l.price_tbd ? <span className="tbd" title="No price on our side — the vendor fills this in on their invoice">?</span>
-                          : fmtMoney(l.qty * (l.cost + (l.packing_each || 0)))}
+                          : fmtMoney(l.qty * ((Number(l.cost) || 0) + (Number(l.packing_each) || 0)))}
                       </td>
                     </tr>
                   ))}

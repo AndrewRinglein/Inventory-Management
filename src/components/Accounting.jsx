@@ -1,6 +1,6 @@
 import React, { useContext, useMemo } from 'react';
 import { AppCtx } from '../App.jsx';
-import { fmtMoney } from '../lib/logic/po.js';
+import { fmtMoney, sumMoney } from '../lib/logic/po.js';
 
 export default function Accounting() {
   const { hall, payments, vendors, boxes, pos, store, reloadHall, setToast, can } = useContext(AppCtx);
@@ -27,7 +27,7 @@ export default function Accounting() {
         <div className="h1">Accounting — {hall === 'sc' ? 'Santa Clara' : 'Redwood City'}</div>
         <div className="grow" />
         <span className="dim" style={{ fontSize: 13 }}>
-          Open: <b className="mono">{fmtMoney(rows.filter((p) => p.status === 'open').reduce((a, p) => a + p.amount, 0))}</b>
+          Open: <b className="mono">{fmtMoney(sumMoney(rows.filter((p) => p.status === 'open'), (p) => p.amount))}</b>
         </span>
       </div>
       <div className="card" style={{ overflow: 'hidden' }}>

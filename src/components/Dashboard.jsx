@@ -1,6 +1,6 @@
 import React, { useContext, useEffect, useState } from 'react';
 import { AppCtx } from '../App.jsx';
-import { fmtMoney } from '../lib/logic/po.js';
+import { fmtMoney, sumMoney } from '../lib/logic/po.js';
 
 const HALL_NAMES = { sc: 'Santa Clara', rwc: 'Redwood City' };
 
@@ -19,7 +19,7 @@ export default function Dashboard() {
   useEffect(() => { store.getEvents(12).then(setEvents); }, [boxes, pos]);   // eslint-disable-line
 
   const live = boxes.filter((b) => b.state === 'in_inventory' || b.state === 'opened');
-  const liveVal = live.reduce((a, b) => a + (b.cost || 0), 0);
+  const liveVal = sumMoney(live, (b) => b.cost);
   // boxes on an archived order aren't really in transit any more — the order left
   // the working views, so it shouldn't keep feeding the dashboard a number
   const liveIds = new Set(pos.map((p) => p.id));
@@ -42,7 +42,7 @@ export default function Dashboard() {
         <div className="card pad stat"><label>Live inventory value</label><div className="v">{fmtMoney(liveVal)}</div><div className="s">{live.length} boxes owned</div></div>
         <div className="card pad stat"><label>Boxes in stock</label><div className="v">{boxes.filter((b) => b.state === 'in_inventory').length}</div><div className="s">{boxes.filter((b) => b.state === 'opened').length} opened on floor</div></div>
         <div className="card pad stat"><label>Open orders</label><div className="v">{openPos.length}</div><div className="s">{inTransit} boxes in transit</div></div>
-        <div className="card pad stat"><label>Open payments</label><div className="v">{fmtMoney(openPay.reduce((a, p) => a + p.amount, 0))}</div><div className="s">{openPay.length} invoices awaiting payment</div></div>
+        <div className="card pad stat"><label>Open payments</label><div className="v">{fmtMoney(sumMoney(openPay, (p) => p.amount))}</div><div className="s">{openPay.length} invoices awaiting payment</div></div>
       </div>
       <div className="two-col">
         <div className="card">

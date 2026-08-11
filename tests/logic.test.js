@@ -788,3 +788,39 @@ test('an order with no packing shows no stock/packing split', () => {
   assert.ok(!/Stock:/.test(e.body), 'nothing to split when the vendor charges no packing');
   assert.match(e.body, /Subtotal:\s+\$412\.00/);
 });
+
+// ---- Postgres numerics arrive as strings ----
+//
+// These guard a bug that shipped: buildDrafts tested the cost with Number() but
+// stored the raw string, so poTotals computed "58.80" + 4 = "58.804" and packing
+// silently fell out of every subtotal, tax and total. The line total was right and
+// the subtotal beneath it was wrong, in the same email, to the vendor.
+test('a PO built from string-typed numerics still totals correctly', () => {
+  const V = [{ id: 'bv', name: 'Bingo Vision', email: 'a@x.test', contact_name: 'S',
+               tax_rate: '0.0975', packing_fee: '4.00' }];
+  const P = [{ id: 'F', vendor_id: 'bv', name: 'Pecker Heads', type: 'flash',
+               base_cost: '58.80', pack_units: 1, packing_units: 1, split_boxes: 1,
+               cost: '58.80', price_per_ticket: '1.00' }];
+  const [d] = buildDrafts({ F: 10 }, P, V);
+
+  assert.equal(typeof d.lines[0].cost, 'number', 'the draft coerces on the way in');
+  assert.equal(d.subtotal, 628, '10 x (58.80 goods + 4.00 packing)');
+  assert.equal(d.tax, 61.23);
+  assert.equal(d.total, 689.23);
+});
+
+test('the printed subtotal equals the printed lines', () => {
+  const V = [{ id: 'bv', name: 'Bingo Vision', email: 'a@x.test', contact_name: 'S',
+               tax_rate: '0.0975', packing_fee: '4.00' }];
+  const P = [
+    { id: 'C', vendor_id: 'bv', name: 'Biker case', type: 'strip', base_cost: '64.60',
+      pack_units: 80, packing_units: 80, split_boxes: 16, cost: '5168.00', price_per_ticket: '1.00' },
+    { id: 'F', vendor_id: 'bv', name: 'Pecker Heads', type: 'flash', base_cost: '58.80',
+      pack_units: 1, packing_units: 1, split_boxes: 1, cost: '58.80', price_per_ticket: '1.00' },
+  ];
+  const [d] = buildDrafts({ C: 1, F: 2 }, P, V);
+  // what the rows say, added up by hand, must be what the footer says
+  const printed = d.lines.reduce((a, l) => a + l.qty * (Number(l.cost) + Number(l.packing_each || 0)), 0);
+  assert.equal(round2(printed), d.subtotal, 'no line may disagree with the subtotal beneath it');
+  assert.equal(d.subtotal, 5613.6);
+});
