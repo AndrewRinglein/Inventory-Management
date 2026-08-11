@@ -103,6 +103,32 @@ export default function App() {
     localStorage.setItem('hall_pref', hall);
   }, [session, hall, reloadHall]);
 
+  // ---- is this tab running the current build? ----
+  //
+  // Asset filenames are content-hashed, so a browser holding a cached index.html
+  // keeps asking for files a later deploy deleted. What the person sees is a screen
+  // that will not load and a stack trace from code we already fixed. Poll the build
+  // id and say so plainly instead.
+  const [staleBuild, setStaleBuild] = useState(false);
+  useEffect(() => {
+    if (typeof __BUILD_ID__ === 'undefined') return;
+    let stop = false;
+    const check = async () => {
+      try {
+        const base = import.meta.env.BASE_URL || '/';
+        const r = await fetch(`${base}version.json?t=${Date.now()}`, { cache: 'no-store' });
+        if (!r.ok) return;
+        const { build } = await r.json();
+        if (!stop && build && build !== __BUILD_ID__) setStaleBuild(true);
+      } catch { /* offline, or the file isn't there yet — say nothing */ }
+    };
+    check();
+    const t = setInterval(check, 5 * 60 * 1000);
+    const onFocus = () => check();
+    window.addEventListener('focus', onFocus);
+    return () => { stop = true; clearInterval(t); window.removeEventListener('focus', onFocus); };
+  }, []);
+
   // ---- admin PIN gate ----
   const requirePin = useCallback(() => {
     if (pinOkRef.current) return Promise.resolve(true);
@@ -216,6 +242,16 @@ export default function App() {
       <div className="layout">
         <Sidebar />
         <div className="main">
+          {staleBuild && (
+            <div className="demo-banner" style={{ background: '#fdf3e7', borderColor: '#e2c39a', display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span>
+                <b>A newer version of this app has been published.</b> This tab is still running an
+                older one — some screens may fail to load until you reload.
+              </span>
+              <div style={{ flex: 1 }} />
+              <button className="btn primary sm" onClick={() => location.reload(true)}>Reload now</button>
+            </div>
+          )}
           {IS_SANDBOX ? (
             <div className="demo-banner" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <span><b>Test mode</b> — staged sandbox with fake data at every stage. Nothing here touches the real system.</span>

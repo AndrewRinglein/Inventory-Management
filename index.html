@@ -3,6 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- The asset filenames are content-hashed and safe to cache forever; this page is
+       not. Cached, it keeps pointing at hashed files that a later deploy removed. -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
   <title>Bingo Inventory &amp; Ordering</title>
   <!-- Fonts load non-blocking: the app must start even if Google Fonts is slow,
        blocked by a firewall, or the hall's internet is flaky. CSS has system fallbacks. -->
