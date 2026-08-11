@@ -117,3 +117,12 @@ select.needs-update { color:#8a6d1f; font-weight:600; }
 .filter-bar label { display: flex; flex-direction: column; gap: 3px; font-size: 11px;
                     text-transform: uppercase; letter-spacing: 0.6px; color: var(--ink-3); font-weight: 600; }
 .filter-bar select, .filter-bar input { font-size: 12.5px; }
+
+/* A value that is also a control: reads as text until you notice it's clickable.
+   Used where a shown match can be corrected in place. */
+.linkish {
+  border: 0; background: none; padding: 0; font: inherit; color: inherit;
+  cursor: pointer; text-align: left;
+  border-bottom: 1px dashed var(--border);
+}
+.linkish:hover { color: var(--teal, #1f4e5f); border-bottom-color: currentColor; }

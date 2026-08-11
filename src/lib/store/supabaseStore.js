@@ -260,49 +260,83 @@ export class SupabaseStore {
       if (!p.product_id) continue;
       want[p.product_id] = (want[p.product_id] || 0) + p.qty;
     }
+    const prods = Object.fromEntries(
+      (ok(await this.sb.from('products').select('*').in('id', Object.keys(want).length ? Object.keys(want) : ['-'])))
+        .map((p) => [p.id, p]));
+
     const short = [];
-    let moved = 0;
+    let moved = 0, invented = 0;
     for (const [pid, n] of Object.entries(want)) {
       const pool = ok(await this.sb.from('boxes').select('id')
         .eq('hall_id', sess.hall_id).eq('product_id', pid).eq('state', 'in_inventory')
         .order('received_at', { nullsFirst: true }).limit(n));      // oldest first
-      if (pool.length < n) short.push({ product_id: pid, wanted: n, found: pool.length });
       for (const b of pool) {
         ok(await this.sb.from('boxes').update({ state: 'opened', session_id: sessionId,
           opened_session: `${sess.session_date}${sess.part ? ' ' + sess.part : ''}` }).eq('id', b.id));
         ok(await this.sb.from('boxes').update({ state: 'sold_out' }).eq('id', b.id));
         moved++;
       }
+      // The sheet says more were played than the shelf held. Record them anyway,
+      // marked as never-received, so the session tells the truth and the gap is
+      // countable instead of quietly dropped.
+      const gap = n - pool.length;
+      if (gap > 0) {
+        short.push({ product_id: pid, wanted: n, found: pool.length, invented: gap });
+        const p = prods[pid] || {};
+        const each = Math.round(((Number(p.base_cost) || 0) * Math.max(1, p.pack_units || 1)
+          / Math.max(1, p.split_boxes || 1)) * 100) / 100;
+        const now = new Date().toISOString();
+        ok(await this.sb.from('boxes').insert(Array.from({ length: gap }, () => ({
+          hall_id: sess.hall_id, product_id: pid, state: 'sold_out', unrecorded: true,
+          session_id: sessionId, cost: each,
+          opened_session: `${sess.session_date}${sess.part ? ' ' + sess.part : ''}`,
+          opened_at: now, sold_out_at: now,
+        }))));
+        invented += gap;
+      }
     }
     const applied = ok(await this.sb.from('sessions')
       .update({ applied_at: new Date().toISOString() }).eq('id', sessionId).select().single());
     await this.logEvent('session.apply', 'sessions', sessionId, {
       label: `${sess.hall_id === 'sc' ? 'Santa Clara' : 'Redwood City'} — ${sess.session_date}` +
-             `${sess.part ? ' ' + sess.part : ''}: ${moved} box(es) taken out of stock`,
-      moved, short: short.length, hall: sess.hall_id,
+             `${sess.part ? ' ' + sess.part : ''}: ${moved + invented} box(es) played` +
+             (invented ? `, ${invented} of them never received into stock` : ''),
+      moved, invented, short: short.length, hall: sess.hall_id,
     });
-    return { session: applied, moved, short };
+    return { session: applied, moved, invented, short };
   }
 
   /** Put a session's boxes back. Exact, because each carries the session's id. */
   async undoSession(sessionId) {
     const sess = ok(await this.sb.from('sessions').select('*').eq('id', sessionId).single());
-    const boxes = await fetchAll(() => this.sb.from('boxes').select('id,state').eq('session_id', sessionId));
-    for (const b of boxes) {
+    const boxes = await fetchAll(() => this.sb.from('boxes').select('id,state,unrecorded').eq('session_id', sessionId));
+    const real = boxes.filter((b) => !b.unrecorded);
+    const ghosts = boxes.filter((b) => b.unrecorded);
+    for (const b of real) {
       if (b.state === 'sold_out') ok(await this.sb.from('boxes').update({ state: 'opened' }).eq('id', b.id));
       ok(await this.sb.from('boxes').update({
         state: 'in_inventory', session_id: null, opened_session: null,
         opened_at: null, sold_out_at: null,
       }).eq('id', b.id));
     }
+    // boxes that were never on a shelf don't go back on one
+    if (ghosts.length) ok(await this.sb.from('boxes').delete().in('id', ghosts.map((b) => b.id)));
     const restored = ok(await this.sb.from('sessions')
       .update({ applied_at: null }).eq('id', sessionId).select().single());
     await this.logEvent('session.undo', 'sessions', sessionId, {
       label: `${sess.hall_id === 'sc' ? 'Santa Clara' : 'Redwood City'} — ${sess.session_date}` +
-             `${sess.part ? ' ' + sess.part : ''}: ${boxes.length} box(es) put back`,
-      restored: boxes.length,
+             `${sess.part ? ' ' + sess.part : ''}: ${real.length} box(es) put back` +
+             (ghosts.length ? `, ${ghosts.length} never-received removed` : ''),
+      restored: real.length, removed: ghosts.length,
     });
-    return { session: restored, restored: boxes.length };
+    return { session: restored, restored: real.length, removed: ghosts.length };
+  }
+
+  /** Point a session line at a different product — or at one for the first time. */
+  async setPlayProduct(playId, productId) {
+    return ok(await this.sb.from('session_plays')
+      .update({ product_id: productId, match_how: 'confirmed', match_score: 1 })
+      .eq('id', playId).select().single());
   }
 
   // ---- receiving ----

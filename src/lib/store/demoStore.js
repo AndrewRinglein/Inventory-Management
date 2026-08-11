@@ -249,37 +249,59 @@ export class DemoStore {
     if (sess.applied_at) throw new Error('That session has already been taken out of stock.');
     const want = {};
     for (const p of plays) if (p.product_id) want[p.product_id] = (want[p.product_id] || 0) + p.qty;
-    const short = []; let moved = 0;
+    const short = []; let moved = 0, invented = 0;
+    const tag = `${sess.session_date}${sess.part ? ' ' + sess.part : ''}`;
+    const now = new Date().toISOString();
     for (const [pid, n] of Object.entries(want)) {
       const pool = this.db.boxes.filter((b) => b.hall_id === sess.hall_id
         && b.product_id === pid && b.state === 'in_inventory').slice(0, n);
-      if (pool.length < n) short.push({ product_id: pid, wanted: n, found: pool.length });
       for (const b of pool) {
-        b.state = 'sold_out';
-        b.session_id = sessionId;
-        b.opened_session = `${sess.session_date}${sess.part ? ' ' + sess.part : ''}`;
-        b.opened_at = b.opened_at || new Date().toISOString();
-        b.sold_out_at = new Date().toISOString();
+        b.state = 'sold_out'; b.session_id = sessionId; b.opened_session = tag;
+        b.opened_at = b.opened_at || now; b.sold_out_at = now;
         moved++;
       }
+      const gap = n - pool.length;
+      if (gap > 0) {
+        short.push({ product_id: pid, wanted: n, found: pool.length, invented: gap });
+        const p = this.db.products.find((x) => x.id === pid) || {};
+        const each = Math.round(((Number(p.base_cost) || 0) * Math.max(1, p.pack_units || 1)
+          / Math.max(1, p.split_boxes || 1)) * 100) / 100;
+        for (let i = 0; i < gap; i++) {
+          this.db.boxes.push({
+            id: uid(), hall_id: sess.hall_id, product_id: pid, state: 'sold_out',
+            unrecorded: true, session_id: sessionId, cost: each, serial: '',
+            opened_session: tag, opened_at: now, sold_out_at: now, received_at: null,
+          });
+        }
+        invented += gap;
+      }
     }
-    sess.applied_at = new Date().toISOString();
-    this._event('session.apply', 'sessions', sessionId, { moved, short: short.length });
+    sess.applied_at = now;
+    this._event('session.apply', 'sessions', sessionId, { moved, invented, short: short.length });
     this._save();
-    return { session: sess, moved, short };
+    return { session: sess, moved, invented, short };
   }
 
   async undoSession(sessionId) {
     const sess = (this.db.sessions || []).find((x) => x.id === sessionId);
     const mine = this.db.boxes.filter((b) => b.session_id === sessionId);
-    for (const b of mine) {
+    const real = mine.filter((b) => !b.unrecorded);
+    for (const b of real) {
       b.state = 'in_inventory'; b.session_id = null; b.opened_session = null;
       b.opened_at = null; b.sold_out_at = null;
     }
+    this.db.boxes = this.db.boxes.filter((b) => !(b.session_id === sessionId && b.unrecorded));
     if (sess) sess.applied_at = null;
-    this._event('session.undo', 'sessions', sessionId, { restored: mine.length });
+    this._event('session.undo', 'sessions', sessionId, { restored: real.length, removed: mine.length - real.length });
     this._save();
-    return { session: sess, restored: mine.length };
+    return { session: sess, restored: real.length, removed: mine.length - real.length };
+  }
+
+  async setPlayProduct(playId, productId) {
+    const p = (this.db.session_plays || []).find((x) => x.id === playId);
+    if (p) Object.assign(p, { product_id: productId, match_how: 'confirmed', match_score: 1 });
+    this._save();
+    return p;
   }
 
   // ---- receiving ----

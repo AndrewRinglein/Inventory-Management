@@ -21,6 +21,8 @@ export default function SessionUse() {
   const [open, setOpen] = useState(null);     // session id drilled into
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(null);
+  const [assign, setAssign] = useState(null);   // the play whose game we're picking
+  const [q, setQ] = useState('');
 
   const load = async () => {
     const [s, p] = await Promise.all([store.getSessions(), store.getAllSessionPlays()]);
@@ -68,11 +70,29 @@ export default function SessionUse() {
       const res = await store.applySession(s.id, byS[s.id] || []);
       await Promise.all([load(), reloadHall()]);
       setConfirm(null);
-      setToast(res.short.length
-        ? `${res.moved} box(es) taken out of stock — ${res.short.length} game(s) came up short and were left alone`
+      setToast(res.invented
+        ? `${res.moved + res.invented} box(es) recorded as played — ${res.invented} of them were never received into stock`
         : `${res.moved} box(es) taken out of stock`, null, 8000);
     } catch (e) {
       setToast(e.message || 'Could not apply that session', null, 8000);
+    } finally { setBusy(false); }
+  };
+
+  /**
+   * Point a line at a product. Kept on the line rather than renaming the game,
+   * because the sheet said what it said — the match is our reading of it, and a
+   * reading should be correctable without editing the evidence.
+   */
+  const doAssign = async (pid) => {
+    if (!assign || busy) return;
+    setBusy(true);
+    try {
+      await store.setPlayProduct(assign.id, pid);
+      await load();
+      setAssign(null); setQ('');
+      setToast(`"${assign.name_raw}" now points at ${pmap[pid]?.name || pid}`);
+    } catch (e) {
+      setToast(e.message || 'Could not save that match');
     } finally { setBusy(false); }
   };
 
@@ -83,7 +103,8 @@ export default function SessionUse() {
     try {
       const res = await store.undoSession(s.id);
       await Promise.all([load(), reloadHall()]);
-      setToast(`${res.restored} box(es) put back on the shelf`);
+      setToast(`${res.restored} box(es) put back on the shelf`
+        + (res.removed ? `, ${res.removed} never-received removed` : ''));
     } catch (e) {
       setToast(e.message || 'Could not undo that session', null, 8000);
     } finally { setBusy(false); }
@@ -141,7 +162,7 @@ export default function SessionUse() {
 
               {(st.short > 0 || st.unmatched > 0) && !done && (
                 <div style={{ fontSize: 11.5, color: '#8a6100', marginTop: 6 }}>
-                  {st.short > 0 && <div>⚠ {st.short} box{st.short === 1 ? '' : 'es'} across {st.shortTitles} game{st.shortTitles === 1 ? '' : 's'} not on the shelf</div>}
+                  {st.short > 0 && <div>⚠ {st.short} box{st.short === 1 ? '' : 'es'} across {st.shortTitles} game{st.shortTitles === 1 ? '' : 's'} played but never received</div>}
                   {st.unmatched > 0 && <div>⚠ {st.unmatched} not matched to a game yet</div>}
                 </div>
               )}
@@ -206,15 +227,25 @@ export default function SessionUse() {
                         <td className="mono dimmer" style={{ fontSize: 11.5 }}>{r.serial || '—'}</td>
                         <td className="r mono">{r.qty}</td>
                         <td style={{ fontSize: 12.5 }}>
-                          {p
-                            ? <>{p.name}{r.match_how !== 'exact' &&
-                                <span className="dimmer" style={{ fontSize: 10.5 }}> ({r.match_how})</span>}</>
-                            : <span className="badge b-gold" style={{ fontSize: 10 }}>no match yet</span>}
+                          {cur.applied_at ? (
+                            p ? p.name : <span className="dimmer">—</span>
+                          ) : p ? (
+                            <button className="linkish" title="Click to point this line at a different game"
+                              onClick={() => { setAssign(r); setQ(''); }}>
+                              {p.name}
+                              {r.match_how !== 'exact' && <span className="dimmer" style={{ fontSize: 10.5 }}> ({r.match_how})</span>}
+                            </button>
+                          ) : (
+                            <button className="badge b-gold" style={{ border: 0, cursor: 'pointer', font: 'inherit', fontSize: 10, fontWeight: 600 }}
+                              title="Pick the game this is" onClick={() => { setAssign(r); setQ(''); }}>
+                              no match yet — pick one
+                            </button>
+                          )}
                         </td>
                         <td className="r mono dimmer">{have == null ? '—' : `${have} ${p ? stockUnit(p)[1] : ''}`}</td>
                         <td className="last" style={{ fontSize: 11.5 }}>
                           {cur.applied_at ? <span style={{ color: 'var(--green,#2e7d5b)' }}>taken out</span>
-                            : shortRow ? <span style={{ color: '#8a6100' }}>only {have} on shelf</span>
+                            : shortRow ? <span style={{ color: '#8a6100' }}>{have} on shelf, {r.qty - have} never received</span>
                             : p ? <span className="dimmer">ready</span>
                             : <span style={{ color: '#8a6100' }}>can't subtract</span>}
                         </td>
@@ -231,6 +262,57 @@ export default function SessionUse() {
                     </button>)}
                 <div style={{ flex: 1 }} />
                 <button className="btn ghost" onClick={() => setOpen(null)}>Close</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ---- pick the game a line means ---- */}
+      {assign && (() => {
+        const term = q.trim().toLowerCase();
+        const list = products
+          .filter((p) => p.active !== false && p.type === 'flash')
+          .filter((p) => !term || p.name.toLowerCase().includes(term))
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .slice(0, 60);
+        return (
+          <div className="modal-bg" onClick={() => !busy && setAssign(null)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 560 }}>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>Which game is this?</div>
+              <p className="dimmer" style={{ fontSize: 12.5, margin: '4px 0 10px' }}>
+                The count sheet wrote <b style={{ color: 'var(--ink)' }}>{assign.name_raw}</b>
+                {assign.serial && <> · serial <span className="mono">{assign.serial}</span></>}.
+                Picking here changes what inventory subtracts; the sheet's own wording is left alone.
+              </p>
+              <input type="text" autoFocus placeholder="Search games…" value={q}
+                onChange={(e) => setQ(e.target.value)} style={{ width: '100%' }} />
+              <div style={{ maxHeight: 320, overflow: 'auto', marginTop: 10, border: '1px solid var(--border-lt)', borderRadius: 6 }}>
+                {list.map((p) => {
+                  const have = cnt[p.id]?.inv || 0;
+                  return (
+                    <div key={p.id} onClick={() => doAssign(p.id)}
+                      style={{ padding: '7px 12px', cursor: 'pointer', display: 'flex', gap: 10,
+                        alignItems: 'center', borderBottom: '1px solid var(--border-lt)',
+                        background: p.id === assign.product_id ? '#eef3f5' : 'transparent' }}>
+                      <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
+                      <span className="dimmer" style={{ fontSize: 11 }}>
+                        {p.tickets ? `${p.tickets.toLocaleString()} tkts · ` : ''}{have} in stock
+                      </span>
+                    </div>
+                  );
+                })}
+                {list.length === 0 && <div className="dimmer" style={{ padding: 16, textAlign: 'center', fontSize: 12.5 }}>
+                  Nothing matches. If this is a game we don't carry yet, add it under Add / Update Games first.
+                </div>}
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                {assign.product_id && (
+                  <button className="btn ghost sm" disabled={busy} onClick={() => doAssign(null)}
+                    title="Leave this line unmatched — it won't be subtracted">Clear the match</button>
+                )}
+                <div style={{ flex: 1 }} />
+                <button className="btn ghost" disabled={busy} onClick={() => setAssign(null)}>Cancel</button>
               </div>
             </div>
           </div>
@@ -254,9 +336,10 @@ export default function SessionUse() {
               {st.short > 0 && (
                 <p style={{ fontSize: 12.5, background: '#fdf8ee', border: '1px solid #e2c39a', borderRadius: 6, padding: '10px 12px' }}>
                   <b>{st.short} box{st.short === 1 ? '' : 'es'} across {st.shortTitles} game{st.shortTitles === 1 ? '' : 's'} aren't
-                  on the shelf.</b> Those will be skipped, not forced negative — the sheet says they were
-                  played, so either a delivery was never received in or the count is behind. Whatever is
-                  there will come out; the rest stays for you to sort out.
+                  on the shelf.</b> They'll still be recorded as played, marked as never received into
+                  stock — the sheet says they went out, so the honest record is that they did and the
+                  delivery is what's missing. They show up as a shortfall you can chase, and Undo removes
+                  them cleanly.
                 </p>
               )}
               {st.unmatched > 0 && (
