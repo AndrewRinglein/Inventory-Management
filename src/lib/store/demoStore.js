@@ -309,6 +309,38 @@ export class DemoStore {
     return p;
   }
 
+  // ---- session assignments ---- (demo mirror)
+  async getAssignments(hallId) {
+    const mine = new Set((this.db.sessions || []).filter((s) => s.hall_id === hallId).map((s) => s.id));
+    return (this.db.session_assignments || []).filter((a) => mine.has(a.session_id));
+  }
+  async ensureSession({ hallId, date, part = '' }) {
+    this.db.sessions ||= [];
+    const found = this.db.sessions.find((s) => s.hall_id === hallId && s.session_date === date && (s.part || '') === part);
+    if (found) return found;
+    const [y, m, d] = date.split('-').map(Number);
+    const row = { id: uid(), hall_id: hallId, session_date: date, part,
+      weekday: new Date(y, m - 1, d, 12).toLocaleDateString('en-US', { weekday: 'long' }),
+      applied_at: null, source_file: null };
+    this.db.sessions.push(row); this._save();
+    return row;
+  }
+  async setAssignments(sessionId, productIds) {
+    this.db.session_assignments ||= [];
+    const want = [...new Set(productIds)];
+    const have = this.db.session_assignments.filter((a) => a.session_id === sessionId);
+    const added = want.filter((pid) => !have.some((a) => a.product_id === pid));
+    const removed = have.filter((a) => !want.includes(a.product_id));
+    this.db.session_assignments = this.db.session_assignments
+      .filter((a) => a.session_id !== sessionId || want.includes(a.product_id));
+    for (const pid of added) {
+      this.db.session_assignments.push({ id: uid(), session_id: sessionId, product_id: pid });
+    }
+    this._event('session.assign', 'sessions', sessionId, { total: want.length });
+    this._save();
+    return { total: want.length, added: added.length, removed: removed.length };
+  }
+
   // ---- deliveries ---- (demo mirror)
   async getDeliveries(hallId) { return (this.db.deliveries || []).filter((d) => d.hall_id === hallId); }
   async addDelivery({ hallId, vendorId, receivedAt, poId = null, poRef = '', invoiceNo = '', note = '', lines }) {

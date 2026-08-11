@@ -355,6 +355,50 @@ export class SupabaseStore {
       .eq('id', playId).select().single());
   }
 
+  // ---- session assignments (what's racked for a session, decided ahead) ----
+  //
+  // A plan, not consumption. Assigning sets nothing in motion in the stock ledger;
+  // what was actually played arrives later on the count sheet. The two disagree
+  // often enough that conflating them would lose information.
+  async getAssignments(hallId) {
+    const rows = await fetchAll(() => this.sb
+      .from('session_assignments')
+      .select('id, session_id, product_id, sessions!inner(hall_id)')
+      .eq('sessions.hall_id', hallId));
+    return rows.map(({ sessions, ...r }) => r);
+  }
+
+  /** Find the session for a hall/date/part, creating it if this is the first time. */
+  async ensureSession({ hallId, date, part = '' }) {
+    const found = ok(await this.sb.from('sessions').select('*')
+      .eq('hall_id', hallId).eq('session_date', date).eq('part', part));
+    if (found.length) return found[0];
+    const [y, m, d] = date.split('-').map(Number);
+    const weekday = new Date(y, m - 1, d, 12).toLocaleDateString('en-US', { weekday: 'long' });
+    return ok(await this.sb.from('sessions')
+      .insert({ hall_id: hallId, session_date: date, part, weekday })
+      .select().single());
+  }
+
+  /** Set a session's assigned games to exactly this list. */
+  async setAssignments(sessionId, productIds) {
+    const want = [...new Set(productIds)];
+    const have = await fetchAll(() => this.sb.from('session_assignments')
+      .select('id, product_id').eq('session_id', sessionId));
+    const drop = have.filter((r) => !want.includes(r.product_id)).map((r) => r.id);
+    const add = want.filter((pid) => !have.some((r) => r.product_id === pid));
+    if (drop.length) ok(await this.sb.from('session_assignments').delete().in('id', drop));
+    if (add.length) {
+      ok(await this.sb.from('session_assignments')
+        .insert(add.map((pid) => ({ session_id: sessionId, product_id: pid }))));
+    }
+    await this.logEvent('session.assign', 'sessions', sessionId, {
+      label: `Assigned ${want.length} flash game(s) to a session`,
+      added: add.length, removed: drop.length, total: want.length,
+    });
+    return { total: want.length, added: add.length, removed: drop.length };
+  }
+
   // ---- deliveries ----
   //
   // Stock arriving, recorded on its own terms. Where it matches a PO we issued,

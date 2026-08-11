@@ -16,6 +16,7 @@ import Receiving from './components/Receiving.jsx';
 import Games from './components/Games.jsx';
 import SettingsScreen from './components/SettingsScreen.jsx';
 import SessionUse from './components/SessionUse.jsx';
+import Assign from './components/Assign.jsx';
 import { PinModal } from './components/PinModal.jsx';
 
 export const AppCtx = React.createContext(null);
@@ -233,7 +234,7 @@ export default function App() {
   const SCREENS = {
     dashboard: Dashboard, purchase: Purchase, review: Review, inventory: Inventory,
     openboxes: OpenBoxes, orders: Orders, accounting: Accounting, intake: Receiving,
-    games: Games, settings: SettingsScreen, sessionuse: SessionUse,
+    games: Games, settings: SettingsScreen, sessionuse: SessionUse, assign: Assign,
   };
   const Screen = SCREENS[screen] || Dashboard;
 

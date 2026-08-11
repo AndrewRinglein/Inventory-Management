@@ -23,6 +23,7 @@ import Receiving from '../src/components/Receiving.jsx';
 import Games from '../src/components/Games.jsx';
 import SessionUse from '../src/components/SessionUse.jsx';
 import AddDelivery from '../src/components/AddDelivery.jsx';
+import Assign from '../src/components/Assign.jsx';
 import SettingsScreen from '../src/components/SettingsScreen.jsx';
 import Sidebar from '../src/components/Sidebar.jsx';
 
@@ -62,7 +63,7 @@ const store = new Proxy({}, {
     if (k === 'isDemo') return true;
     return async () => ({
       getSessions: sessions, getAllSessionPlays: plays, getSessionPlays: plays,
-      getPoLines: [], getEmails: [], getEvents: [], getDeliveries: [],
+      getPoLines: [], getEmails: [], getEvents: [], getDeliveries: [], getAssignments: [],
     }[k] ?? []);
   },
 });
@@ -81,7 +82,7 @@ const ctx = {
 
 const SCREENS = {
   Dashboard, Purchase, Review, Inventory, OpenBoxes, Orders, Accounting,
-  Receiving, Games, SessionUse, SettingsScreen, Sidebar,
+  Receiving, Games, SessionUse, Assign, SettingsScreen, Sidebar,
   AddDelivery: (p) => <AddDelivery onClose={() => {}} {...p} />,
 };
 
