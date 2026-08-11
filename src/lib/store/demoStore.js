@@ -311,8 +311,21 @@ export class DemoStore {
   async setPlayProduct(playId, productId) {
     const p = (this.db.session_plays || []).find((x) => x.id === playId);
     if (p) Object.assign(p, { product_id: productId, match_how: 'confirmed', match_score: 1 });
+    if (p) await this.learnAlias(productId, p.name_raw);
     this._save();
     return p;
+  }
+
+  /** Mirrors supabaseStore: a hand-made match teaches the catalog that name. */
+  async learnAlias(productId, raw) {
+    const name = String(raw || '').trim();
+    const prod = (this.db.products || []).find((x) => x.id === productId);
+    if (!name || !prod) return;
+    const key = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const known = [prod.name, ...(prod.aliases || [])].map(key);
+    if (known.includes(key(name))) return;
+    prod.aliases = [...(prod.aliases || []), name].slice(-12);
+    this._save();
   }
 
   // ---- session assignments ---- (demo mirror)

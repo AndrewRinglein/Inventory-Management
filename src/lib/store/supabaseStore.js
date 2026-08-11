@@ -358,11 +358,35 @@ export class SupabaseStore {
     return { session: restored, restored: real.length, removed: ghosts.length };
   }
 
-  /** Point a session line at a different product — or at one for the first time. */
+  /**
+   * Point a session line at a different product — or at one for the first time.
+   *
+   * The name the programs use is recorded on the product as an alias, so the
+   * match is made once and never again. Three games on the 10 Aug programme had
+   * to be matched by hand — "Boop-Oop A-Doop" against a catalog reading BOOPOOP
+   * ADOOP, "Dabbing Derby" against Dabbin' Derby, "Triple 500" against a catalog
+   * typo of Tirple 500 — and every one of them would have come back next month.
+   * The person at the desk already did the thinking; this keeps it.
+   */
   async setPlayProduct(playId, productId) {
-    return ok(await this.sb.from('session_plays')
+    const play = ok(await this.sb.from('session_plays')
       .update({ product_id: productId, match_how: 'confirmed', match_score: 1 })
       .eq('id', playId).select().single());
+    await this.learnAlias(productId, play.name_raw);
+    return play;
+  }
+
+  /** Remember a name a product is known by. No-op if it already matches. */
+  async learnAlias(productId, raw) {
+    const name = String(raw || '').trim();
+    if (!name || !productId) return;
+    const p = ok(await this.sb.from('products').select('name,aliases').eq('id', productId).single());
+    const key = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const known = [p.name, ...(p.aliases || [])].map(key);
+    if (known.includes(key(name))) return;
+    // cap it: a runaway import must not grow one row without bound
+    const next = [...(p.aliases || []), name].slice(-12);
+    ok(await this.sb.from('products').update({ aliases: next }).eq('id', productId).select().single());
   }
 
   // ---- session assignments (what's racked for a session, decided ahead) ----
