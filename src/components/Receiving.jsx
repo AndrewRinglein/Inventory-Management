@@ -3,6 +3,7 @@ import { AppCtx } from '../App.jsx';
 import { fmtMoney } from '../lib/logic/po.js';
 import { buildShortageEmail, buildDeliveredEmail, senderFor } from '../lib/logic/emails.js';
 import { needsSetup } from '../lib/logic/setup.js';
+import AddDelivery from './AddDelivery.jsx';
 
 const HALL_NAMES = { sc: 'Santa Clara', rwc: 'Redwood City' };
 
@@ -26,6 +27,7 @@ export default function Receiving() {
   const [stage, setStage] = useState('checkin'); // checkin | emails
   const [pendingEmails, setPendingEmails] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [addDelivery, setAddDelivery] = useState(false);
   const [pendingScan, setPendingScan] = useState(null);   // scanned code awaiting game pick
   const [scanCount, setScanCount] = useState(0);
   const [manualCode, setManualCode] = useState('');       // the scan box (also accepts typing)
@@ -333,10 +335,26 @@ export default function Receiving() {
   if (!cur) {
     return (
       <div>
-        <div className="page-head"><div className="h1">Receiving — {HALL_NAMES[hall]}</div></div>
+        <div className="page-head">
+          <div className="h1">Receiving — {HALL_NAMES[hall]}</div>
+          <div className="grow" />
+          <button className="btn primary" onClick={() => setAddDelivery(true)}
+            title="Stock that arrived without going through Review & Send here">
+            + Add delivery
+          </button>
+        </div>
+        {addDelivery && <AddDelivery onClose={() => setAddDelivery(false)} />}
         <div className="card" style={{ overflow: 'hidden' }}>
           <div style={{ padding: '12px 16px', fontWeight: 600, fontSize: 13, borderBottom: '1px solid var(--border)' }}>Which order arrived?</div>
-          {open.length === 0 && <div style={{ padding: 30, textAlign: 'center' }} className="dimmer">No orders are awaiting delivery.</div>}
+          {open.length === 0 && (
+            <div style={{ padding: 30, textAlign: 'center' }} className="dimmer">
+              No orders are awaiting delivery.<br />
+              <span style={{ fontSize: 12.5 }}>
+                Stock can still arrive without one — use <b>Add delivery</b> above for a phoned-in
+                order, a weekly drop, or anything from before this system.
+              </span>
+            </div>
+          )}
           <table className="tbl"><tbody>
             {open.map((p) => (
               <tr key={p.id} style={{ cursor: 'pointer' }} onClick={() => setReceivingPo(p.id)}>

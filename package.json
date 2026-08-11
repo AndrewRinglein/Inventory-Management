@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test tests/logic.test.js"
+    "test": "node --test tests/logic.test.js && node tests/run-render.mjs",
+    "test:render": "node tests/run-render.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

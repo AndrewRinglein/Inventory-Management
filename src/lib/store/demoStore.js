@@ -304,6 +304,47 @@ export class DemoStore {
     return p;
   }
 
+  // ---- deliveries ---- (demo mirror)
+  async getDeliveries(hallId) { return (this.db.deliveries || []).filter((d) => d.hall_id === hallId); }
+  async addDelivery({ hallId, vendorId, receivedAt, poId = null, poRef = '', invoiceNo = '', note = '', lines }) {
+    this.db.deliveries ||= [];
+    const del = { id: uid(), hall_id: hallId, vendor_id: vendorId, received_at: receivedAt,
+      po_id: poId, po_ref: poRef || null, invoice_no: invoiceNo || null, note: note || null,
+      created_at: new Date().toISOString() };
+    this.db.deliveries.push(del);
+    let claimed = 0, created = 0;
+    for (const l of lines) {
+      let left = Math.max(0, parseInt(l.qty) || 0);
+      if (!left) continue;
+      if (poId) {
+        for (const b of this.db.boxes) {
+          if (left <= 0) break;
+          if (b.po_id === poId && b.product_id === l.product_id && b.state === 'on_order') {
+            b.state = 'in_inventory'; b.delivery_id = del.id; b.received_at = receivedAt;
+            claimed++; left--;
+          }
+        }
+      }
+      const p = this.db.products.find((x) => x.id === l.product_id) || {};
+      const each = Math.round(((Number(p.base_cost) || 0) * Math.max(1, p.pack_units || 1)
+        / Math.max(1, p.split_boxes || 1)) * 100) / 100;
+      for (let i = 0; i < left; i++) {
+        this.db.boxes.push({ id: uid(), hall_id: hallId, product_id: l.product_id,
+          state: 'in_inventory', delivery_id: del.id, po_id: poId, cost: each,
+          price_tbd: !(each > 0), received_at: receivedAt, serial: '' });
+        created++;
+      }
+    }
+    if (poId) {
+      const left = this.db.boxes.some((b) => b.po_id === poId && b.state === 'on_order');
+      const po = this.db.purchase_orders.find((x) => x.id === poId);
+      if (po) po.status = left ? 'partial' : 'closed';
+    }
+    this._event('delivery.add', 'deliveries', del.id, { claimed, created, po_ref: poRef });
+    this._save();
+    return { delivery: del, claimed, created, total: claimed + created };
+  }
+
   // ---- receiving ----
   async createShipment(s) {
     const row = { id: uid(), confirmed: false, received_at: new Date().toISOString(), ...s };

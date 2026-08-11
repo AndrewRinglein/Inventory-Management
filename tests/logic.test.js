@@ -686,9 +686,19 @@ test('units in a box and units charged packing are different numbers', () => {
 
 test('the four parts read back as a set', () => {
   const p = priceParts({ base_cost: 64, pack_units: 80, packing_units: 80 }, BV);
-  assert.deepEqual(p, { base: 64, units: 80, box: 5120, packing: 320, allIn: 5440,
-                        split: 1, perBox: 5440, multiplied: true, splits: false },
-    'with no split set, the whole landed cost sits on the one box');
+  assert.equal(p.base, 64);
+  assert.equal(p.units, 80);
+  assert.equal(p.box, 5120, 'base x deals is what the vendor invoices for the goods');
+  assert.equal(p.packing, 320);
+  assert.equal(p.allIn, 5440, 'goods plus packing is what gets paid');
+  assert.equal(p.split, 1);
+  assert.equal(p.perBox, 5120,
+    'but stock value is goods only — packing is freight, not worth on a shelf');
+  assert.equal(p.multiplied, true);
+  assert.equal(p.splits, false);
+  assert.deepEqual(p.unit, ['tote', 'totes'],
+    'and it says what one counted thing is — 80 deals to a unit is the Biker case, '
+    + 'which is counted in totes');
 });
 
 test('a vendor that charges no packing never adds any, whatever the units', () => {
@@ -705,7 +715,10 @@ test('a case that arrives as 16 totes values each tote at a sixteenth', () => {
   assert.equal(p.packing, 320);
   assert.equal(p.allIn, 5440, 'landed cost of the case');
   assert.equal(p.split, 16);
-  assert.equal(p.perBox, 340, 'and each tote on the shelf is worth a sixteenth of that');
+  assert.equal(p.perBox, 320,
+    'each tote is worth a sixteenth of the GOODS — the $320 packing bills on the PO '
+    + 'but does not ride on the shelf, or an identical tote from a bigger delivery '
+    + 'would be worth less');
 });
 
 test('almost everything is one box per ordered unit, so nothing changes', () => {
@@ -713,8 +726,9 @@ test('almost everything is one box per ordered unit, so nothing changes', () => 
   const p = priceParts(flash, BV);
   assert.equal(p.split, 1);
   assert.equal(p.splits, false);
-  assert.equal(p.perBox, p.allIn, 'buy a box, shelf a box');
-  assert.equal(p.perBox, 62.8);
+  assert.equal(p.perBox, p.box, 'buy a box, shelf a box');
+  assert.equal(p.perBox, 58.8, 'at the goods price; its $4 packing stays on the PO');
+  assert.equal(p.allIn, 62.8, 'which is still what the vendor charges');
 });
 
 test('ordering a splitting product creates one box per tote, not per case', () => {
@@ -727,10 +741,10 @@ test('ordering a splitting product creates one box per tote, not per case', () =
   assert.equal(line.qty, 2, 'the PO orders 2 cases');
   assert.equal(line.cost, 5120, 'at the case price');
   assert.equal(line.split_boxes, 16);
-  assert.equal(line.per_box_cost, 340);
+  assert.equal(line.per_box_cost, 320);
   assert.equal(line.qty * line.split_boxes, 32, 'which will become 32 totes in inventory');
-  assert.equal(round2(line.qty * line.split_boxes * line.per_box_cost), 10880,
-    'and the shelf value equals what the order landed at');
+  assert.equal(round2(line.qty * line.split_boxes * line.per_box_cost), 10240,
+    'and the shelf value equals the goods on the order, packing excluded');
 });
 
 // ---- packing on the line, and the stock/packing split ----
@@ -745,7 +759,8 @@ test('a PO line prints base, units, packing and its own total', () => {
   const [d] = buildDrafts({ C: 1, F: 2 }, P, V);
   const [e] = buildOrderEmails([{ ...d, num: 'N1' }], V, 'Redwood City', '', '', { name: 'Shelly' });
 
-  assert.match(e.body, /Base\s+Units\s+Packing\s+Line total/, 'a header naming the parts');
+  assert.match(e.body, /Unit\s+Item\s+Base\s+Deals\s+Packing\s+Line total/,
+    'a header in the words both sides of an invoice use: a Unit is ordered, Deals are inside it');
   assert.match(e.body, /10-Pack of strips Biker\s+\$64\.00\s+x80\s+\$320\.00\s+\$5,440\.00/);
   assert.match(e.body, /Pecker Heads\s+\$58\.80\s+\$8\.00\s+\$125\.60/,
     'two boxes: packing is extended too, so 58.80x2 + 8.00 = 125.60 reads off the row');

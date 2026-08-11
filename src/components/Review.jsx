@@ -216,7 +216,7 @@ export default function Review() {
               <div key={i} onClick={() => setEmailIdx(i)}
                 style={{ padding: '8px 14px', borderBottom: '1px solid var(--border-lt)', cursor: 'pointer', background: i === emailIdx ? '#eef3f5' : 'transparent', fontSize: 12.5 }}>
                 <span className={'badge ' + (e.kind === 'po' ? 'b-teal' : 'b-gray')} style={{ marginRight: 8 }}>{e.kind === 'po' ? 'PO' : 'copy'}</span>
-                {view(i).subject}
+                {e.subject}
               </div>
             ))}
           </div>

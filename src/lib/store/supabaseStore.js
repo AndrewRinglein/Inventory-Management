@@ -339,6 +339,70 @@ export class SupabaseStore {
       .eq('id', playId).select().single());
   }
 
+  // ---- deliveries ----
+  //
+  // Stock arriving, recorded on its own terms. Where it matches a PO we issued,
+  // the boxes that PO already put on order are the ones received — creating new
+  // ones would double the count. Anything beyond what the PO expected, or arriving
+  // with no PO of ours at all, becomes new stock.
+  async getDeliveries(hallId) {
+    return fetchAll(() => this.sb.from('deliveries').select('*').eq('hall_id', hallId)
+      .order('received_at', { ascending: false }));
+  }
+
+  async addDelivery({ hallId, vendorId, receivedAt, poId = null, poRef = '', invoiceNo = '', note = '', lines }) {
+    const del = ok(await this.sb.from('deliveries').insert({
+      hall_id: hallId, vendor_id: vendorId, received_at: receivedAt,
+      po_id: poId, po_ref: poRef || null, invoice_no: invoiceNo || null, note: note || null,
+    }).select().single());
+
+    const ids = lines.map((l) => l.product_id);
+    const prods = Object.fromEntries(
+      (ok(await this.sb.from('products').select('*').in('id', ids.length ? ids : ['-'])))
+        .map((p) => [p.id, p]));
+
+    let claimed = 0, created = 0;
+    for (const l of lines) {
+      const n = Math.max(0, parseInt(l.qty) || 0);
+      if (!n) continue;
+      let left = n;
+      if (poId) {
+        const pool = ok(await this.sb.from('boxes').select('id')
+          .eq('po_id', poId).eq('product_id', l.product_id).eq('state', 'on_order').limit(left));
+        for (const b of pool) {
+          ok(await this.sb.from('boxes').update({
+            state: 'in_inventory', delivery_id: del.id, received_at: receivedAt,
+          }).eq('id', b.id));
+          claimed++; left--;
+        }
+      }
+      if (left > 0) {
+        const p = prods[l.product_id] || {};
+        const each = Math.round(((Number(p.base_cost) || 0) * Math.max(1, p.pack_units || 1)
+          / Math.max(1, p.split_boxes || 1)) * 100) / 100;
+        ok(await this.sb.from('boxes').insert(Array.from({ length: left }, () => ({
+          hall_id: hallId, product_id: l.product_id, state: 'in_inventory',
+          delivery_id: del.id, po_id: poId, cost: each,
+          price_tbd: !(each > 0), received_at: receivedAt,
+        }))));
+        created += left;
+      }
+    }
+
+    // a PO with nothing left on order has arrived in full
+    if (poId) {
+      const remaining = ok(await this.sb.from('boxes').select('id').eq('po_id', poId).eq('state', 'on_order').limit(1));
+      await this.setPoStatus(poId, remaining.length ? 'partial' : 'closed');
+    }
+
+    await this.logEvent('delivery.add', 'deliveries', del.id, {
+      label: `${hallId === 'sc' ? 'Santa Clara' : 'Redwood City'} — delivery from ${vendorId} on ${receivedAt}: ` +
+             `${claimed + created} box(es)` + (poRef ? ` (${poRef})` : ''),
+      claimed, created, po_id: poId, po_ref: poRef,
+    });
+    return { delivery: del, claimed, created, total: claimed + created };
+  }
+
   // ---- receiving ----
   async createShipment(s) { return ok(await this.sb.from('shipments').insert(s).select().single()); }
   async confirmShipment(id) { return ok(await this.sb.from('shipments').update({ confirmed: true }).eq('id', id).select().single()); }
