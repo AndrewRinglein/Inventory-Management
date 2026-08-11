@@ -247,6 +247,12 @@ export class DemoStore {
     const sess = (this.db.sessions || []).find((x) => x.id === sessionId);
     if (!sess) throw new Error('Session not found');
     if (sess.applied_at) throw new Error('That session has already been taken out of stock.');
+    // mirrors supabaseStore: applied_at is stamped last, so a run that died partway
+    // leaves boxes consumed and the flag clear. The boxes are the durable record.
+    if ((this.db.boxes || []).some((b) => b.session_id === sessionId)) {
+      throw new Error('This session was partly applied before and stopped midway. '
+        + 'Undo it first, then apply it again — otherwise the stock gets taken off twice.');
+    }
     const want = {};
     for (const p of plays) if (p.product_id) want[p.product_id] = (want[p.product_id] || 0) + p.qty;
     const short = []; let moved = 0, invented = 0;

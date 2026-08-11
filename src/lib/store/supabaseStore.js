@@ -255,6 +255,16 @@ export class SupabaseStore {
   async applySession(sessionId, plays) {
     const sess = ok(await this.sb.from('sessions').select('*').eq('id', sessionId).single());
     if (sess.applied_at) throw new Error('That session has already been taken out of stock.');
+    // applied_at is stamped at the END, so a run that dies partway — a dropped
+    // connection, a closed laptop — leaves boxes consumed and the session still
+    // looking unapplied. Pressing apply again would take a SECOND box off the
+    // shelf for every line that had already gone through. The boxes themselves
+    // are the durable record of that, so ask them, not the flag.
+    const already = ok(await this.sb.from('boxes').select('id').eq('session_id', sessionId).limit(1));
+    if (already.length) {
+      throw new Error('This session was partly applied before and stopped midway. '
+        + 'Undo it first, then apply it again — otherwise the stock gets taken off twice.');
+    }
     const want = {};
     for (const p of plays) {
       if (!p.product_id) continue;
