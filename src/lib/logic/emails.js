@@ -6,7 +6,7 @@
 // the situation in plain sentences, makes one clear ask, and is signed by a
 // named human (configured in Settings → Sender identity).
 
-import { fmtMoney, round2 } from './po.js';
+import { fmtMoney, round2, poTotals } from './po.js';
 
 /**
  * Each hall has its own person on the emails (Sagit for SC, Shelly for RWC).
@@ -450,11 +450,28 @@ export function buildShortageEmail(po, vendor, hallName, missingLines, sender = 
 }
 
 export function buildDeliveredEmail(po, vendor, hallName, invoiceNo, receivedLines, missingLines, sender = {}, accountingName = '') {
-  const received = round2(receivedLines.reduce((a, l) => a + lineTotal(l), 0));
-  const tax = round2(received * (Number(vendor.tax_rate) || 0));
-  const owed = round2(received + tax);
+  // The bill and the order it came from must be worked out the same way, or the
+  // app disagrees with itself and then prints its own disagreement as a variance
+  // to chase. So this runs the received lines through poTotals — the same engine
+  // the PO used — instead of re-deriving the money here.
+  //
+  // Doing it by hand got two things wrong, and both of them overcharged the hall:
+  // it taxed the packing/collation service, which is not goods, and it ignored
+  // products.taxable, so daubers bought for resale were taxed too. A Bingo Vision
+  // case with $1,600 of packing was billed $156.00 over; a $987 dauber invoice was
+  // billed $96.23 over. That number is written straight into payments.amount.
+  const t = poTotals(receivedLines, Number(vendor?.tax_rate) || 0);
+  const received = t.subtotal;
+  const tax = t.tax;
+  const owed = t.total;
   const variance = round2((Number(po.total) || 0) - owed);
   const short = missingLines.length > 0;
+  // show the split only when it explains something: packing charged, or an exemption
+  const anyPacking = t.packing > 0;
+  const qualifyTax = anyPacking || t.exempt > 0;
+  // widest label wins, so every figure lands in the same column
+  const labelW = Math.max(20, taxLabel(vendor, qualifyTax).length + 1);
+  const tRow = (label, amount) => `  ${label.padEnd(labelW)}${fmtMoney(amount).padStart(11)}`;
 
   return {
     kind: 'delivered', po_num: po.num, to: '(accounting)',
@@ -482,18 +499,27 @@ export function buildDeliveredEmail(po, vendor, hallName, invoiceNo, receivedLin
         ...missingLines.map(line),
       ] : []),
       ``,
-      `  ${'Received subtotal:'.padEnd(20)}${fmtMoney(received).padStart(11)}`,
-      `  ${`Tax (${(vendor.tax_rate * 100).toFixed(2)}%):`.padEnd(20)}${fmtMoney(tax).padStart(11)}`,
-      `  ${'AMOUNT TO PAY:'.padEnd(20)}${fmtMoney(owed).padStart(11)}`,
+      // one column width for every money row, sized to the widest label present —
+      // "Tax (9.75% on taxable stock):" is longer than the old plain "Tax (9.75%):"
+      // and a fixed pad left the figures in a ragged line down the page
+      anyPacking ? tRow('Stock:', t.goods) : null,
+      anyPacking ? tRow('Packing:', t.packing) : null,
+      t.exempt > 0 ? tRow('Of which exempt:', t.exempt) : null,
+      tRow('Received subtotal:', received),
+      tRow(taxLabel(vendor, qualifyTax), tax),
+      tRow('AMOUNT TO PAY:', owed),
+      qualifyTax
+        ? `\n  Tax is charged on taxable stock only — packing is a service and supplies bought for resale are exempt.`
+        : null,
       ``,
-      `  ${'Original PO total:'.padEnd(20)}${fmtMoney(po.total).padStart(11)}`,
-      `  ${'Difference:'.padEnd(20)}${fmtMoney(variance).padStart(11)}${variance !== 0 ? '   <- worth a look before paying' : ''}`,
+      tRow('Original PO total:', po.total),
+      `${tRow('Difference:', variance)}${variance !== 0 ? '   <- worth a look before paying' : ''}`,
       ``,
       short
         ? `I've asked ${vendor.contact_name || vendor.name} about the missing items and will let you know whether they're backordered or credited.`
         : `Nothing outstanding on this one.`,
       ...signature(sender, hallName),
-    ].join('\n'),
+    ].filter((l) => l !== null).join('\n'),
     amount: owed,
   };
 }

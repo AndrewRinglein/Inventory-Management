@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test tests/logic.test.js && node tests/run-render.mjs && node tests/no-inner-components.mjs",
+    "test": "node --test tests/logic.test.js && node tests/run-render.mjs && node tests/no-inner-components.mjs && node tests/no-inline-money.mjs",
     "test:render": "node tests/run-render.mjs",
     "build:pages": "BASE_PATH=/Inventory-Management/ vite build",
     "deploy": "npm run build:pages && node scripts/deploy-pages.mjs"

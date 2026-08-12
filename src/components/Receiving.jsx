@@ -4,6 +4,7 @@ import { fmtMoney } from '../lib/logic/po.js';
 import { buildShortageEmail, buildDeliveredEmail, senderFor } from '../lib/logic/emails.js';
 import { needsSetup } from '../lib/logic/setup.js';
 import { splitBoxes } from '../lib/logic/pricing.js';
+import { receivedLine, missingLine, extraLine, perUnitOf, lineSplit } from '../lib/logic/receiving.js';
 import AddDelivery from './AddDelivery.jsx';
 
 const HALL_NAMES = { sc: 'Santa Clara', rwc: 'Redwood City' };
@@ -172,8 +173,7 @@ export default function Receiving() {
    * the person counting all work in totes. The line records what the split was at
    * the time it was sent; the catalog is only a fallback for older lines.
    */
-  const boxesPerUnit = (l) => Math.max(1,
-    parseInt(l.split_boxes) || splitBoxes(products.find((p) => p.id === l.product_id)) || 1);
+  const boxesPerUnit = (l) => lineSplit(l, products.find((p) => p.id === l.product_id));
 
   /** Boxes this line still owes, counted the same way the shelf counts them. */
   const remainingFor = (l) => {
@@ -182,8 +182,7 @@ export default function Receiving() {
   };
 
   /** What one box off this line costs — the ordered-unit price divided by the split. */
-  const perBoxOf = (l, orderedUnitPrice) =>
-    Math.round((Number(orderedUnitPrice) || 0) / boxesPerUnit(l) * 100) / 100;
+  const perBoxOf = (l, orderedUnitPrice) => perUnitOf(orderedUnitPrice, boxesPerUnit(l));
 
   // role guard AFTER all hooks (react rules) — masters viewing the other hall land here
   if (!can('receive')) {
@@ -294,10 +293,12 @@ export default function Receiving() {
           });
           await store.transitionBox(pool[i].id, 'in_inventory');
         }
-        // the emails talk in boxes, so their arithmetic reads off the page
-        if (got > 0) receivedLines.push({ ...l, qty: got, cost: perBox, price_tbd: false });
+        // the emails count in boxes, so every per-unit figure on the line comes
+        // down to the box — see logic/receiving.js, which owns that arithmetic
+        const prod = products.find((p) => p.id === l.product_id);
+        if (got > 0) receivedLines.push(receivedLine(l, prod, got, unit));
         const still = want - got;
-        if (still > 0) missingLines.push({ ...l, qty: still, cost: perBox, price_tbd: l.price_tbd && !(unit > 0) });
+        if (still > 0) missingLines.push(missingLine(l, prod, still, unit));
       }
       // items that arrived but weren't on the PO: create them straight into inventory
       for (const x of extras) {
@@ -305,12 +306,17 @@ export default function Receiving() {
         if (!n) continue;
         const sers = (x.serials || '').split(/[,\n]/).map((t) => t.trim()).filter(Boolean);
         const unit = x.price_tbd ? priceOf(x.product_id, x.cost) : x.cost;
+        const xp = products.find((p) => p.id === x.product_id);
+        // `unit` is an ORDERED-UNIT price and `n` is a count of boxes, so this has
+        // to be divided down exactly like a PO line. Billing the case price against
+        // the tote count put a single off-PO Biker case on the invoice at $82,688.
+        const row = extraLine(xp, x.name, n, unit);
         await store.createBoxes(Array.from({ length: n }, (_, i) => ({
           hall_id: hall, product_id: x.product_id, po_id: cur.id, shipment_id: shipment.id,
-          serial: sers[i] || '', cost: unit, price_tbd: false, state: 'in_inventory',
+          serial: sers[i] || '', cost: row.cost, price_tbd: false, state: 'in_inventory',
           received_at: new Date().toISOString(),
         })));
-        receivedLines.push({ name_snapshot: x.name, qty: n, cost: unit, extra: true });
+        receivedLines.push(row);
       }
       await store.confirmShipment(shipment.id);
       await store.setPoStatus(cur.id, missingLines.length ? 'partial' : 'closed');
