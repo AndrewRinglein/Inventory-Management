@@ -3,6 +3,19 @@ import { AppCtx } from '../App.jsx';
 import { deliveryAddress, setVendorAddress, overriddenVendors } from '../lib/logic/halls.js';
 import { PO_TEXT_DEFAULTS } from '../lib/logic/emails.js';
 
+/**
+ * Defined OUT here, not inside the component.
+ *
+ * A component declared inside another is a brand-new function identity on every
+ * render, so React cannot match it to the previous tree — it unmounts the old
+ * one and mounts a fresh one. Every input inside it is destroyed and recreated,
+ * and the browser drops focus with it: you type one letter and the caret is
+ * gone. Every field on this screen was doing that.
+ */
+const Row = ({ label, children }) => (
+  <div className="field"><label>{label}</label>{children}</div>
+);
+
 export default function SettingsScreen() {
   const { settings, vendors, store, reloadSettings, reloadCatalog, setToast, requirePin, IS_DEMO, hall, boxes, pos, payments, products, can } = useContext(AppCtx);
   if (!can('settings')) return <div className="card pad dimmer">Settings are Super Admin only.</div>;
@@ -60,10 +73,6 @@ export default function SettingsScreen() {
     a.download = `bingo-inventory-export-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
   };
-
-  const Row = ({ label, children }) => (
-    <div className="field"><label>{label}</label>{children}</div>
-  );
 
   return (
     <div>
