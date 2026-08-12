@@ -18,6 +18,35 @@ import AskDistributor from './AskDistributor.jsx';
  * a value that already exists is Super Admin, and changing money asks for the PIN —
  * a price edit follows through onto every future PO.
  */
+
+/**
+ * The shape a type comes in.
+ *
+ * Changing a game's type used to leave these alone, so a flash game retyped as
+ * a strip stayed 1 deal to a box, packed, counted in boxes — while every other
+ * strip in the catalog is 8 deals to a lettered pack with no packing. The type
+ * IS the shape; picking one and then hand-fixing four other fields is a step
+ * nobody remembers.
+ *
+ * Strips are 8 more often than not. Some are 16 and a Biker tote is 80, so the
+ * fields stay visible and editable and the form says what it changed.
+ */
+const TYPE_SHAPE = {
+  flash:  { pack_units: 1, split_boxes: 1, packing_units: 1, stock_unit: 'box' },
+  strip:  { pack_units: 8, split_boxes: 8, packing_units: 0, stock_unit: 'pack' },
+  paper:  { pack_units: 1, split_boxes: 1, packing_units: 0, stock_unit: 'box' },
+  supply: { pack_units: 1, split_boxes: 1, packing_units: 0, stock_unit: 'dozen' },
+};
+
+/** True when the fields still look like the shape they came from — nobody has hand-set them. */
+function looksUntouched(f, type) {
+  const sh = TYPE_SHAPE[type];
+  if (!sh) return true;
+  return Number(f.pack_units) === sh.pack_units
+      && Number(f.split_boxes) === sh.split_boxes
+      && Number(f.packing_units) === sh.packing_units;
+}
+
 export default function UpdateGame({ product, onClose }) {
   const { store, reloadCatalog, reloadHall, setToast, vendors, requirePin, can } = useContext(AppCtx);
   const admin = can('editCatalog');
@@ -33,6 +62,7 @@ export default function UpdateGame({ product, onClose }) {
     price_per_ticket: String(ticketPrice(product)),
     active: product.active !== false,
     packing_units: String(Number(product.packing_units) || 0),
+    stock_unit: product.stock_unit || '',
     // blank means "use the distributor's rate" — 0 is a different, real answer
     packing_rate: product.packing_rate == null || product.packing_rate === ''
       ? '' : String(Number(product.packing_rate)),
@@ -40,6 +70,20 @@ export default function UpdateGame({ product, onClose }) {
   const [saving, setSaving] = useState(false);
   const [asking, setAsking] = useState(false);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+
+  // Picking a type pulls its shape along, unless someone has already hand-set
+  // those fields — then their numbers win and they get told nothing moved.
+  const [reshaped, setReshaped] = useState(null);
+  const setType = (next) => {
+    const sh = TYPE_SHAPE[next];
+    setF((s) => {
+      if (!sh || !looksUntouched(s, s.type)) { setReshaped(null); return { ...s, type: next }; }
+      setReshaped(next);
+      return { ...s, type: next,
+        pack_units: String(sh.pack_units), split_boxes: String(sh.split_boxes),
+        packing_units: String(sh.packing_units), stock_unit: sh.stock_unit };
+    });
+  };
 
   const costWasSet = !needsCost(product);
   const vendorName = vendors.find((v) => v.id === product.vendor_id)?.name || '';
@@ -87,6 +131,7 @@ export default function UpdateGame({ product, onClose }) {
     const pu = Math.max(0, parseInt(f.packing_units) || 0);
     if (admin && pu !== (Number(product.packing_units) || 0)) out.packing_units = pu;
     // '' clears the override back to the distributor's rate; 0 pins it to free
+    if (admin && f.stock_unit && f.stock_unit !== product.stock_unit) out.stock_unit = f.stock_unit;
     const pr = f.packing_rate.trim() === '' ? null : Math.max(0, parseFloat(f.packing_rate) || 0);
     const wasPr = product.packing_rate == null || product.packing_rate === ''
       ? null : Number(product.packing_rate);
@@ -147,10 +192,18 @@ export default function UpdateGame({ product, onClose }) {
 
         <div className="field"><label>Type</label>
           <select value={f.type} autoFocus={needsType(product)}
-            onChange={(e) => set('type', e.target.value)} style={{ width: '100%' }}>
+            onChange={(e) => setType(e.target.value)} style={{ width: '100%' }}>
             <option value="">— pick a type —</option>
             {REAL_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
           </select>
+          {reshaped && TYPE_SHAPE[reshaped] && (
+            <div style={{ fontSize: 11.5, marginTop: 5, color: 'var(--green,#2e7d5b)' }}>
+              Set to the usual {reshaped} shape — {TYPE_SHAPE[reshaped].pack_units} per unit,
+              counted in {TYPE_SHAPE[reshaped].stock_unit}s
+              {TYPE_SHAPE[reshaped].packing_units ? ', packed' : ', no packing'}.
+              {reshaped === 'strip' && ' Change it to 16 if this one is a 16-pack.'}
+            </div>
+          )}
           {f.type && !wantsTickets && (
             <div className="dimmer" style={{ fontSize: 11.5, marginTop: 4 }}>
               {isGrabBag(product) ? 'A mixed pack changes contents each order, so'
