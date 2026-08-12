@@ -27,9 +27,6 @@ export default function Inventory() {
   const [miscF, setMiscF] = useState('games');
   const [sortKey, setSortKey] = useState('name');
   const [dir, setDir] = useState(1);
-  const [assignPid, setAssignPid] = useState(null);
-  const [assignTag, setAssignTag] = useState('');
-  const [assignQty, setAssignQty] = useState(1);
   const [adjustMode, setAdjustMode] = useState(false);
   const [showAdjust, setShowAdjust] = useState(false);
   const [adj, setAdj] = useState(null);      // { p, from, to }
@@ -109,17 +106,6 @@ export default function Inventory() {
     });
   };
 
-  const doAssign = async () => {
-    const row = rows.find((r) => r.p.id === assignPid);
-    if (!row || !assignTag.trim()) return;
-    const pool = boxes.filter((b) => b.product_id === assignPid && b.state === 'in_inventory' && !b.session_tag)
-      .slice(0, Math.max(1, assignQty));
-    if (!pool.length) { setToast('No unassigned boxes left for this game'); return; }
-    await store.setBoxSession(pool.map((b) => b.id), assignTag.trim());
-    await reloadHall();
-    setAssignPid(null); setAssignTag('');
-    setToast(`${pool.length} box${pool.length > 1 ? 'es' : ''} set aside for ${assignTag.trim()}`);
-  };
 
   // A hand count that disagrees with the system. The note is required — a
   // count that changes without a reason is worse than no count at all.
@@ -143,13 +129,6 @@ export default function Inventory() {
     } finally { setSaving(false); }
   };
 
-  const clearAssign = async () => {
-    const ids = boxes.filter((b) => b.product_id === assignPid && b.session_tag).map((b) => b.id);
-    await store.setBoxSession(ids, null);
-    await reloadHall();
-    setAssignPid(null);
-    setToast('Set-asides cleared');
-  };
 
   return (
     <div>
@@ -251,8 +230,6 @@ export default function Inventory() {
                 <td style={{ fontSize: 11, color: 'var(--green)' }}>{r.assignedLabel}</td>
                 <td className="last r" style={{ whiteSpace: 'nowrap' }}>
                   {editable ? (<>
-                    <button className="btn green sm" disabled={r.avail <= 0}
-                      onClick={() => { setAssignPid(r.p.id); setAssignQty(1); }}>Assign</button>{' '}
                     <button className="btn orange sm" disabled={(r.c.inv || 0) <= 0} onClick={() => openOne(r)}>Open</button>{' '}
                     <button className="btn ghost sm" title="Edit this game — name, distributor, type, price, tickets"
                       onClick={() => setUpdPid(r.p.id)}>Edit</button>
@@ -306,29 +283,6 @@ export default function Inventory() {
         </div>
       )}
 
-      {assignPid && (
-        <div className="modal-bg" onClick={() => setAssignPid(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>Set aside for a session</div>
-            <p className="dim" style={{ fontSize: 12.5, marginBottom: 14 }}>
-              {products.find((p) => p.id === assignPid)?.name}
-            </p>
-            <div className="field"><label>Session</label>
-              <select value={assignTag} autoFocus onChange={(e) => setAssignTag(e.target.value)} style={{ width: '100%' }}>
-                <option value="">— pick a session —</option>
-                {SESSIONS.map((sn) => <option key={sn} value={sn}>{sn}</option>)}
-              </select></div>
-            <div className="field"><label>How many boxes</label>
-              <input type="number" min="1" value={assignQty} onChange={(e) => setAssignQty(Math.max(1, parseInt(e.target.value) || 1))} style={{ width: 90 }} /></div>
-            <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-              <button className="btn green" onClick={doAssign}>Set aside</button>
-              <button className="btn ghost" onClick={clearAssign}>Clear all set-asides</button>
-              <div style={{ flex: 1 }} />
-              <button className="btn ghost" onClick={() => setAssignPid(null)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

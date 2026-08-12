@@ -34,7 +34,7 @@ export default function Sidebar() {
       <Item id="dashboard" label="Dashboard" />
       <Item id="purchase" label="Purchase" />
       <div className="sb-sec">Track</div>
-      <Item id="assign" label="Assign" title="Rack the flash games for a session and print the Paymaster sheet" />
+      <Item id="assign" label="Assign Pre-Sale" title="Rack the flash games for a session and print the Paymaster sheet" />
       <Item id="sessionuse" label="Session Use" title="What each session played, and taking it out of stock" />
       <Item id="openboxes" label="Open Boxes" />
       <Item id="inventory" label="Inventory" />

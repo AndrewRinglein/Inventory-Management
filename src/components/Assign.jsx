@@ -114,7 +114,7 @@ export default function Assign() {
   return (
     <div>
       <div className="page-head no-print">
-        <div className="h1">Assign — {HALL[hall]}</div>
+        <div className="h1">Assign Pre-Sale — {HALL[hall]}</div>
         <div className="hall-switch" style={{ margin: 0 }}>
           <button className={tab === 'build' ? 'on' : ''} onClick={() => setTab('build')}>Assign a session</button>
           <button className={tab === 'assigned' ? 'on' : ''} onClick={() => setTab('assigned')}>
