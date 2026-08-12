@@ -36,3 +36,26 @@ create trigger no_apply_historical before insert or update on sessions
 -- files should be; a second file for the same slot is a duplicate to resolve
 create unique index if not exists sessions_slot_key
   on sessions (hall_id, session_date, part);
+
+
+-- CORRECTION. The first load of these files counted the strip block at the top
+-- of each flash tab as well as the game list below it, and turned every row of
+-- it into one box. It is not boxes: those cells are TICKET counts (590, 6997,
+-- 235) against the standing strip lineup, which is on every sheet whether or
+-- not anything moved.
+--
+-- It roughly tripled Redwood City. RWC 28 Jul loaded as 50 boxes when the
+-- sheet's own "Totals for All Other Flash Games" cell reads 17 on-site and 6
+-- pre-sale — 23. Across all 264 files, 6,720 of the 15,484 rows loaded were
+-- strip-block rows that never should have been counted.
+--
+-- It hid behind the reconciliation check because that check only compared the
+-- FLASH list against the declared total. Those matched 528 out of 528 — and
+-- were right. The strip rows were extra, on top, unchecked.
+--
+-- Angela caught it by counting a sheet by hand: "I just went and counted one
+-- from the window of fifty and found seventeen."
+--
+-- Only the flash list counts now — from the '1199 Derby' anchor down, where
+-- every row is one box. 8,764 boxes across the year, and the monthly averages
+-- line up with August instead of towering over it.
