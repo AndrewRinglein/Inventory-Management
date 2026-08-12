@@ -421,6 +421,26 @@ export class DemoStore {
 
   // ---- deliveries ---- (demo mirror)
   async getDeliveries(hallId) { return (this.db.deliveries || []).filter((d) => d.hall_id === hallId); }
+
+  /** Mirrors supabaseStore: shipments and deliveries are both arrivals. */
+  async getArrivals(hallId) {
+    const pos = Object.fromEntries((this.db.purchase_orders || []).map((p) => [p.id, p]));
+    const fromShip = (this.db.shipments || [])
+      .filter((sh) => pos[sh.po_id]?.hall_id === hallId)
+      .map((sh) => ({
+        id: sh.id, source: 'shipment', hall_id: hallId,
+        received_at: String(sh.received_at).slice(0, 10), received_ts: sh.received_at,
+        vendor_id: pos[sh.po_id].vendor_id, po_id: sh.po_id, po_ref: pos[sh.po_id].num,
+        invoice_no: sh.invoice_no || null, note: sh.notes || null,
+        boxes: (this.db.boxes || []).filter((b) => b.po_id === sh.po_id && b.state !== 'on_order').length,
+      }));
+    const fromDel = (this.db.deliveries || []).filter((d) => d.hall_id === hallId).map((d) => ({
+      ...d, source: 'delivery', received_ts: d.received_at,
+      boxes: (this.db.boxes || []).filter((b) => b.delivery_id === d.id).length,
+    }));
+    return [...fromShip, ...fromDel]
+      .sort((a, b) => String(b.received_ts).localeCompare(String(a.received_ts)));
+  }
   async addDelivery({ hallId, vendorId, receivedAt, poId = null, poRef = '', invoiceNo = '', note = '', lines }) {
     this.db.deliveries ||= [];
     const del = { id: uid(), hall_id: hallId, vendor_id: vendorId, received_at: receivedAt,

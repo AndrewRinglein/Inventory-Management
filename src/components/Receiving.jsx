@@ -41,13 +41,10 @@ export default function Receiving() {
   const vmap = useMemo(() => Object.fromEntries(vendors.map((v) => [v.id, v])), [vendors]);
 
   // what has already landed, newest first — reloaded whenever stock moves
-  useEffect(() => { store.getDeliveries(hall).then(setDeliveries).catch(() => setDeliveries([])); },
-    [hall, boxes, store]);
-  const delCounts = useMemo(() => {
-    const n = {};
-    for (const b of boxes) if (b.delivery_id) n[b.delivery_id] = (n[b.delivery_id] || 0) + 1;
-    return n;
-  }, [boxes]);
+  // arrivals, not deliveries — a received PO writes a shipment, an ad-hoc drop
+  // writes a delivery, and reading one table shows half the story
+  useEffect(() => { store.getArrivals(hall).then(setDeliveries).catch(() => setDeliveries([])); },
+    [hall, boxes, pos, store]);
 
   // manual entry: type a game name, pick from the catalog (this vendor's games first)
   const matchingProducts = useMemo(() => {
@@ -421,7 +418,7 @@ export default function Receiving() {
                 <td>{vmap[d.vendor_id]?.name || d.vendor_id}</td>
                 <td className="mono dim" style={{ fontSize: 12 }}>{d.po_ref || '—'}</td>
                 <td className="dim" style={{ fontSize: 12 }}>{d.invoice_no ? `inv ${d.invoice_no}` : ''}</td>
-                <td className="r mono last">{delCounts[d.id] || 0} {delCounts[d.id] === 1 ? 'box' : 'boxes'}</td>
+                <td className="r mono last">{d.boxes || 0} {d.boxes === 1 ? 'box' : 'boxes'}</td>
               </tr>
             ))}
           </tbody></table>

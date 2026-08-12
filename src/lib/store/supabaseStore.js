@@ -559,6 +559,19 @@ export class SupabaseStore {
       .order('received_at', { ascending: false }));
   }
 
+  /**
+   * Every time stock turned up, from either write path.
+   *
+   * Receiving a PO writes a SHIPMENT; "Add delivery", for a drop with no PO of
+   * ours, writes a DELIVERY. Same event, two tables, and anything reading only
+   * one is wrong for half the hall — Redwood City receives through the PO flow
+   * and its "recently received" list sat empty with 145 boxes on the shelf.
+   */
+  async getArrivals(hallId, limit = 60) {
+    return ok(await this.sb.from('stock_arrivals').select('*')
+      .eq('hall_id', hallId).order('received_ts', { ascending: false }).limit(limit));
+  }
+
   async addDelivery({ hallId, vendorId, receivedAt, poId = null, poRef = '', invoiceNo = '', note = '', lines }) {
     const del = ok(await this.sb.from('deliveries').insert({
       hall_id: hallId, vendor_id: vendorId, received_at: receivedAt,

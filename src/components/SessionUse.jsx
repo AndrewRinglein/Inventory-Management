@@ -38,7 +38,24 @@ export default function SessionUse() {
     return m;
   }, [plays]);
 
-  const mine = (sessions || []).filter((s) => s.hall_id === hall);
+  // A session imported from a pre-system programme (July and earlier) is history.
+  // It cannot come off the shelf, and comparing it with today's stock is
+  // meaningless — the boxes it played were never in the system.
+  const isHistory = (s) => !!s.historical;
+
+  const forHall = (sessions || []).filter((s) => s.hall_id === hall);
+  const months = [...new Set(forHall.map((s) => String(s.session_date).slice(0, 7)))].sort().reverse();
+  const [period, setPeriod] = useState('current');
+  const monthName = (ym) => {
+    const [y, m] = ym.split('-');
+    return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString([], { month: 'long', year: 'numeric' });
+  };
+  const mine = forHall.filter((s) => {
+    if (period === 'all') return true;
+    if (period === 'current') return !isHistory(s);
+    if (period === 'history') return isHistory(s);
+    return String(s.session_date).slice(0, 7) === period;
+  }).sort((a, b) => String(b.session_date + (b.part || '')).localeCompare(a.session_date + (a.part || '')));
 
   /**
    * What a session would cost the shelf, worked out per product rather than per
@@ -53,7 +70,7 @@ export default function SessionUse() {
     const want = {};
     for (const r of rows) if (r.product_id) want[r.product_id] = (want[r.product_id] || 0) + r.qty;
     let short = 0, shortTitles = 0;
-    if (!s.applied_at) {
+    if (!s.applied_at && !isHistory(s)) {
       for (const [pid, n] of Object.entries(want)) {
         const have = cnt[pid]?.inv || 0;
         if (n > have) { short += n - have; shortTitles++; }
@@ -72,7 +89,7 @@ export default function SessionUse() {
       setConfirm(null);
       setToast(res.invented
         ? `${res.moved + res.invented} box(es) recorded as played — ${res.invented} of them were never received into stock`
-        : `${res.moved} box(es) taken out of stock`, null, 8000);
+        : `${res.moved} box(es) removed from stock`, null, 8000);
     } catch (e) {
       setToast(e.message || 'Could not apply that session', null, 8000);
     } finally { setBusy(false); }
@@ -122,14 +139,32 @@ export default function SessionUse() {
         <div className="h1">Session Use — {HALL[hall]}</div>
         <div className="grow" />
         <span className="dim" style={{ fontSize: 13 }}>
-          {mine.length} session{mine.length === 1 ? '' : 's'} · {totalBoxes} flash boxes played ·{' '}
-          <b>{applied}</b> taken out of stock
+          {mine.length} session{mine.length === 1 ? '' : 's'} · {totalBoxes} flash boxes played
+          {mine.some((s) => !isHistory(s)) && <> · <b>{applied}</b> removed from stock</>}
         </span>
       </div>
 
       <div className="demo-banner" style={{ background: '#eef3f5', borderColor: '#c9d6db' }}>
         Each card is one session, read from that day's count sheet. Nothing leaves inventory until
-        you press <b>Take out of stock</b> on the card — and that can be undone.
+        you press <b>Remove stock</b> on the card — and that can be undone.
+        {' '}Sessions marked <b>history</b> are from before the system held inventory: they are here
+        for run rates only, so they have nothing to remove and are not compared against the shelf.
+      </div>
+
+      <div className="card pad" style={{ marginBottom: 12, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span className="dimmer" style={{ fontSize: 12, marginRight: 2 }}>Show:</span>
+        <button className={'btn sm ' + (period === 'current' ? 'primary' : 'ghost')}
+          onClick={() => setPeriod('current')} title="Sessions the system holds inventory for">Current</button>
+        <button className={'btn sm ' + (period === 'history' ? 'primary' : 'ghost')}
+          onClick={() => setPeriod('history')} title="Imported programmes, July and earlier">History</button>
+        <button className={'btn sm ' + (period === 'all' ? 'primary' : 'ghost')}
+          onClick={() => setPeriod('all')}>All</button>
+        <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }} />
+        <select value={months.includes(period) ? period : ''} style={{ minWidth: 150 }}
+          onChange={(e) => e.target.value && setPeriod(e.target.value)}>
+          <option value="">— jump to a month —</option>
+          {months.map((m) => <option key={m} value={m}>{monthName(m)}</option>)}
+        </select>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(280px,1fr))', gap: 12 }}>
@@ -138,15 +173,17 @@ export default function SessionUse() {
           const done = !!s.applied_at;
           return (
             <div key={s.id} className="card" style={{
-              padding: '14px 16px', borderLeft: `4px solid ${done ? 'var(--green,#2e7d5b)' : st.short ? '#d9a441' : 'var(--border)'}`,
-              background: done ? '#f4f9f6' : '#fff',
+              padding: '14px 16px', borderLeft: `4px solid ${isHistory(s) ? 'var(--border)' : done ? 'var(--green,#2e7d5b)' : st.short ? '#d9a441' : 'var(--border)'}`,
+              background: isHistory(s) ? '#fafafa' : done ? '#f4f9f6' : '#fff',
             }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
                 <b style={{ fontSize: 14.5 }}>{sessionLabel(s)}</b>
                 <div style={{ flex: 1 }} />
-                {done
-                  ? <span className="badge b-green" title={`Applied ${new Date(s.applied_at).toLocaleString()}`}>✓ out of stock</span>
-                  : <span className="badge b-gray">not applied</span>}
+                {isHistory(s)
+                  ? <span className="badge b-grey" title="Played before the system held inventory — kept for run-rate history only">history</span>
+                  : done
+                    ? <span className="badge b-green" title={`Applied ${new Date(s.applied_at).toLocaleString()}`}>✓ stock removed</span>
+                    : <span className="badge b-gray">not applied</span>}
               </div>
 
               <div style={{ display: 'flex', gap: 18, margin: '12px 0 4px' }}>
@@ -170,11 +207,11 @@ export default function SessionUse() {
               <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
                 <button className="btn ghost sm" onClick={() => setOpen(s.id)}>See the list →</button>
                 <div style={{ flex: 1 }} />
-                {can('boxes') && (done
+                {!isHistory(s) && can('boxes') && (done
                   ? <button className="btn ghost sm" disabled={busy} onClick={() => doUndo(s)}
                       title="Put these boxes back on the shelf">↩ Undo</button>
                   : <button className="btn primary sm" disabled={busy} onClick={() => setConfirm(s)}>
-                      Take out of stock
+                      Remove stock
                     </button>)}
               </div>
             </div>
@@ -197,7 +234,9 @@ export default function SessionUse() {
             <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 860, maxWidth: '95vw', maxHeight: '88vh', overflow: 'auto' }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
                 <div style={{ fontWeight: 700, fontSize: 15 }}>{sessionLabel(cur)} — {HALL[cur.hall_id]}</div>
-                {cur.applied_at && <span className="badge b-green">✓ out of stock</span>}
+                {isHistory(cur)
+                  ? <span className="badge b-grey" title="Played before the system held inventory">history</span>
+                  : cur.applied_at && <span className="badge b-green">✓ stock removed</span>}
                 <div style={{ flex: 1 }} />
                 <span className="dimmer" style={{ fontSize: 11.5 }}>{cur.source_file}</span>
               </div>
@@ -215,7 +254,7 @@ export default function SessionUse() {
                   {rows.map((r) => {
                     const p = pmap[r.product_id];
                     const have = r.product_id ? (cnt[r.product_id]?.inv || 0) : null;
-                    const shortRow = !cur.applied_at && p && r.qty > have;
+                    const shortRow = !cur.applied_at && !isHistory(cur) && p && r.qty > have;
                     return (
                       <tr key={r.id}>
                         <td className="first">
@@ -242,7 +281,7 @@ export default function SessionUse() {
                             </button>
                           )}
                         </td>
-                        <td className="r mono dimmer">{have == null ? '—' : `${have} ${p ? stockUnit(p)[1] : ''}`}</td>
+                        <td className="r mono dimmer">{isHistory(cur) || have == null ? '—' : `${have} ${p ? stockUnit(p)[1] : ''}`}</td>
                         <td className="last" style={{ fontSize: 11.5 }}>
                           {cur.applied_at ? <span style={{ color: 'var(--green,#2e7d5b)' }}>taken out</span>
                             : shortRow ? <span style={{ color: '#8a6100' }}>{have} on shelf, {r.qty - have} never received</span>
@@ -255,10 +294,10 @@ export default function SessionUse() {
                 </tbody>
               </table>
               <div style={{ display: 'flex', gap: 8, marginTop: 14, alignItems: 'center' }}>
-                {can('boxes') && (cur.applied_at
+                {!isHistory(cur) && can('boxes') && (cur.applied_at
                   ? <button className="btn ghost" disabled={busy} onClick={() => doUndo(cur)}>↩ Put these back on the shelf</button>
                   : <button className="btn primary" disabled={busy} onClick={() => { setOpen(null); setConfirm(cur); }}>
-                      Take {st.total - st.unmatched} box{st.total - st.unmatched === 1 ? '' : 'es'} out of stock
+                      Remove {st.total - st.unmatched} box{st.total - st.unmatched === 1 ? '' : 'es'}
                     </button>)}
                 <div style={{ flex: 1 }} />
                 <button className="btn ghost" onClick={() => setOpen(null)}>Close</button>
@@ -326,7 +365,7 @@ export default function SessionUse() {
           <div className="modal-bg" onClick={() => !busy && setConfirm(null)}>
             <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 520 }}>
               <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6 }}>
-                Take {sessionLabel(confirm)} out of stock?
+                Remove stock for {sessionLabel(confirm)}?
               </div>
               <p style={{ fontSize: 13 }}>
                 This marks {st.total - st.unmatched} box{st.total - st.unmatched === 1 ? '' : 'es'} as
@@ -350,7 +389,7 @@ export default function SessionUse() {
               )}
               <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
                 <button className="btn primary" disabled={busy} onClick={() => doApply(confirm)}>
-                  {busy ? 'Working…' : 'Take out of stock'}
+                  {busy ? 'Working…' : 'Remove stock'}
                 </button>
                 <div style={{ flex: 1 }} />
                 <button className="btn ghost" disabled={busy} onClick={() => setConfirm(null)}>Cancel</button>

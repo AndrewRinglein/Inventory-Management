@@ -66,7 +66,7 @@ const store = new Proxy({}, {
     return async () => ({
       getSessions: sessions, getAllSessionPlays: plays, getSessionPlays: plays,
       getPoLines: [], getEmails: [], getEvents: [], getDeliveries: [], getAssignments: [],
-      getAdjustments: [],
+      getAdjustments: [], getArrivals: [],
     }[k] ?? []);
   },
 });
