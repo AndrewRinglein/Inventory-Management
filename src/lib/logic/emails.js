@@ -6,8 +6,7 @@
 // the situation in plain sentences, makes one clear ask, and is signed by a
 // named human (configured in Settings → Sender identity).
 
-import { fmtMoney, round2, poTotals } from './po.js';
-import { packColorList } from '../../data/variety-packs.js';
+import { fmtMoney, round2, poTotals, snapshotHead, snapshotRest } from './po.js';
 
 /**
  * Each hall has its own person on the emails (Sagit for SC, Shelly for RWC).
@@ -58,7 +57,10 @@ const money = (n) => fmtMoney(n);
  */
 const line = (l) => {
   const each = Number(l.cost) + (Number(l.packing_each) || 0);
-  return `  ${String(l.qty).padStart(3)} x ${l.name_snapshot.padEnd(40)}  ${fmtMoney(each).padStart(10)} ea  =${fmtMoney(l.qty * each).padStart(12)}`;
+  // the snapshot may carry a colour list under the name (see lineName)
+  const head = `  ${String(l.qty).padStart(3)} x ${snapshotHead(l.name_snapshot).padEnd(40)}  ${fmtMoney(each).padStart(10)} ea  =${fmtMoney(l.qty * each).padStart(12)}`;
+  const rest = snapshotRest(l.name_snapshot);
+  return rest.length ? [head, ...rest.map((r) => ' '.repeat(8) + r)].join('\n') : head;
 };
 
 function lineRow(l, w) {
@@ -69,15 +71,19 @@ function lineRow(l, w) {
   // up as written: base x units x qty, plus packing, equals the line total
   const packing = packEach * l.qty;
   const total = l.price_tbd ? '?' : money(l.qty * (Number(l.cost) + packEach));
-  return [
+  const first = [
     String(l.qty).padStart(4),
     ' x ',
-    l.name_snapshot.padEnd(w.name),
+    snapshotHead(l.name_snapshot).padEnd(w.name),
     (l.price_tbd ? '?' : money(base)).padStart(w.base),
     (units > 1 ? `x${units}` : '').padStart(w.units),
     (packing > 0 ? money(packing) : '').padStart(w.pack),
     total.padStart(w.total),
   ].join('');
+  // a colour list sits under its line, indented to the Item column, so the table
+  // keeps the width of a name rather than the width of eleven colours
+  const rest = snapshotRest(l.name_snapshot);
+  return rest.length ? [first, ...rest.map((r) => ' '.repeat(7) + r)].join('\n') : first;
 }
 
 // "Unit" is what gets ordered and invoiced — a box, a set, a case. "Deals" is how
@@ -95,7 +101,7 @@ function lineHeader(w) {
 /** Column widths sized to the content, so nothing is cut and nothing floats. */
 function widths(lines) {
   return {
-    name: Math.max(20, ...lines.map((l) => l.name_snapshot.length)) + 2,
+    name: Math.max(20, ...lines.map((l) => snapshotHead(l.name_snapshot).length)) + 2,
     base: 12, units: 7, pack: 11, total: 14,
   };
 }
@@ -164,14 +170,7 @@ function poBody(po, vendor, hallName, hallAddress, sender, text = {}) {
     ``,
     lineHeader(w),
     '-'.repeat(4 + 3 + w.name + w.base + w.units + w.pack + w.total),
-    // a variety pack has to say what is in it, or "one colour pack" is all the
-    // vendor has been told and the colours get settled at the loading dock
-    ...po.lines.flatMap((l) => {
-      const colors = packColorList(l.product_id);
-      return colors
-        ? [lineRow(l, w), `${' '.repeat(7)}colours: ${colors}`]
-        : [lineRow(l, w)];
-    }),
+    ...po.lines.map((l) => lineRow(l, w)),
     '-'.repeat(4 + 3 + w.name + w.base + w.units + w.pack + w.total),
     ``,
     // split the subtotal so both sides can see what was goods and what was packing.
@@ -299,12 +298,10 @@ export function poHtml(po, vendor, hallName, hallAddress, sender, text = {}) {
       ? 'price to be confirmed'
       : [`${money(base)} each`, deals > 1 ? `× ${deals} deals` : null,
          packing > 0 ? `+ ${money(packing)} packing` : null].filter(Boolean).join(' ');
-    // a variety pack names its colours, so the vendor picks the same eleven we did
-    const colors = packColorList(l.product_id);
     return `<tr>
       <td class="num l">${l.qty}</td>
-      <td class="l">${esc(l.name_snapshot)}<span class="detail">${detail}</span>${
-        colors ? `<span class="detail">colours: ${esc(colors)}</span>` : ''}</td>
+      <td class="l">${esc(snapshotHead(l.name_snapshot))}<span class="detail">${detail}</span>${
+        snapshotRest(l.name_snapshot).map((r) => `<span class="detail">${esc(r)}</span>`).join('')}</td>
       <td class="num hide-sm">${l.price_tbd ? tbd : money(base)}</td>
       <td class="num hide-sm">${deals > 1 ? '&times;' + deals : ''}</td>
       <td class="num hide-sm">${packing > 0 ? money(packing) : ''}</td>

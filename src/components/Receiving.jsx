@@ -1,6 +1,6 @@
 import React, { useContext, useEffect, useMemo, useState, useRef } from 'react';
 import { AppCtx } from '../App.jsx';
-import { fmtMoney } from '../lib/logic/po.js';
+import { fmtMoney, snapshotHead } from '../lib/logic/po.js';
 import { buildShortageEmail, buildDeliveredEmail, senderFor } from '../lib/logic/emails.js';
 import { needsSetup } from '../lib/logic/setup.js';
 import { splitBoxes } from '../lib/logic/pricing.js';
@@ -75,7 +75,7 @@ export default function Receiving() {
       if (scannedRef.current.has(code)) return { ok: false, message: `${code} was already scanned this delivery.` };
       setManualCode('');   // the scan box is the scanner's home — always clear it
       const hit = lines.find((l) => (serials[l.product_id] || '').split(/[\s,\n]+/).includes(code));
-      if (hit) { applyScan(hit.product_id, code); return { ok: true, message: `✓ ${hit.name_snapshot}` }; }
+      if (hit) { applyScan(hit.product_id, code); return { ok: true, message: `✓ ${snapshotHead(hit.name_snapshot)}` }; }
       const ex = (stateRef.current.extras || []).find((x) => (x.serials || '').split(/[\s,\n]+/).includes(code));
       if (ex) { applyExtraScan(ex.key, code); return { ok: true, message: `✓ ${ex.name}` }; }
       setPendingScan(code);
@@ -485,7 +485,7 @@ export default function Receiving() {
               const rem = remainingFor(l);
               return (
                 <tr key={l.id} style={rem === 0 ? { opacity: 0.5 } : {}}>
-                  <td className="first">{l.name_snapshot}</td>
+                  <td className="first" style={{ whiteSpace: 'pre-line' }}>{l.name_snapshot}</td>
                   <td className="r mono">{l.qty}</td>
                   <td className="r mono">{rem}</td>
                   <td className="r mono">
@@ -601,7 +601,7 @@ export default function Receiving() {
             {lines.filter((l) => remainingFor(l) > 0).map((l) => (
               <button key={l.id} className="btn ghost" style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 6 }}
                 onClick={() => { applyScan(l.product_id, pendingScan); setPendingScan(null); }}>
-                {l.name_snapshot} <span className="dimmer">({remainingFor(l)} expected)</span>
+                <span style={{ whiteSpace: 'pre-line' }}>{l.name_snapshot}</span> <span className="dimmer">({remainingFor(l)} expected)</span>
               </button>
             ))}
             {lines.every((l) => remainingFor(l) === 0) && <p className="dimmer" style={{ marginBottom: 8 }}>Nothing left expected on this order.</p>}

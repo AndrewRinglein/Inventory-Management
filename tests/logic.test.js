@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { poTotals, nextPoNum, buildDrafts, lineName, round2, packingLine, fmtMoney, ticketPrice } from '../src/lib/logic/po.js';
+import { poTotals, nextPoNum, buildDrafts, lineName, round2, packingLine, fmtMoney, ticketPrice,
+  snapshotHead, snapshotRest } from '../src/lib/logic/po.js';
 import { canTransition, transition, countByProduct } from '../src/lib/logic/boxes.js';
 import { resolveScan } from '../src/lib/logic/scan.js';
 import { buildOrderEmails, buildDeliveredEmail, buildShortageEmail, senderFor } from '../src/lib/logic/emails.js';
@@ -1027,4 +1028,49 @@ test('shortage value counts goods plus packing, and no tax', () => {
   const missing = [{ qty: 2, name_snapshot: 'Biker', cost: 323, packing_each: 10 }];
   const e = buildShortageEmail({ num: 'SC-5' }, vendors[0], 'Santa Clara', missing, SENDER);
   assert.match(e.body, /Missing value:\s+\$666\.00/);
+});
+
+// ---------- variety packs on the order ----------
+
+test('a variety pack carries its colours into the PO line at send time', () => {
+  // Not looked up when something renders it — baked into name_snapshot, the same
+  // way the name is, so the sent order is a record of what was actually asked for.
+  const pack = { id: 'S831', vendor_id: 'md', name: 'Sunsational 4oz — colour pack ($3)',
+    type: 'supply', base_cost: 19.50, cost: 214.50, pack_units: 11, split_boxes: 11,
+    packing_units: 0, taxable: false };
+  const md = { id: 'md', name: 'Marathon', email: 'm@x', tax_rate: 0.0975, packing_fee: 4 };
+  const [d] = buildDrafts({ S831: 2 }, [pack], [md]);
+  const snap = d.lines[0].name_snapshot;
+  assert.match(snap, /^Sunsational 4oz — colour pack \(\$3\)\n/);
+  assert.match(snap, /colours: Red, Green, Orange, Pink, Magenta, Sky Blue, Coral, Lilac, Violet, Yellow and Ruby Red$/);
+  assert.equal(snapshotHead(snap), 'Sunsational 4oz — colour pack ($3)');
+  assert.equal(snapshotRest(snap).length, 1);
+  // exempt supply, no packing, 2 x $214.50
+  assert.equal(d.total, 429);
+});
+
+test('an ordinary game gets no colour line', () => {
+  const p = { id: 'M1', vendor_id: 'md', name: 'Lucky Sevens', type: 'flash', base_cost: 80,
+    cost: 80, pack_units: 1, split_boxes: 1, packing_units: 1, tickets: 1200, price_per_ticket: 1 };
+  const md = { id: 'md', name: 'Marathon', email: 'm@x', tax_rate: 0.0975, packing_fee: 4 };
+  const [d] = buildDrafts({ M1: 5 }, [p], [md]);
+  assert.equal(d.lines[0].name_snapshot, 'Lucky Sevens (1200/$1)');
+  assert.equal(snapshotRest(d.lines[0].name_snapshot).length, 0);
+});
+
+test('the colour line prints under its row without widening the table', () => {
+  const md = { id: 'md', name: 'Marathon', email: 'm@x', contact_name: 'Esteban', tax_rate: 0.0975 };
+  const lines = [{ product_id: 'S831', qty: 2, cost: 214.50, base_cost: 19.50, pack_units: 11,
+    packing_each: 0, taxable: false, kind: 'item',
+    name_snapshot: 'Sunsational 4oz — colour pack ($3)\ncolours: Red, Green and Blue' }];
+  const po = { num: 'X', hall_id: 'sc', vendor_id: 'md', lines, ...poTotals(lines, 0.0975), sent_at: '2026-08-12' };
+  const [e] = buildOrderEmails([po], [md], 'Santa Clara', '1 Main St', SENDER);
+  const rows = e.body.split('\n');
+  const item = rows.find((r) => r.includes('Sunsational'));
+  const colourRow = rows.find((r) => r.trim().startsWith('colours:'));
+  assert.ok(item && colourRow, 'both the row and its colours are printed');
+  assert.ok(rows.indexOf(colourRow) === rows.indexOf(item) + 1, 'colours sit directly under the row');
+  // the Item column is sized on the name, not on the colour list
+  const header = rows.find((r) => r.startsWith('Unit'));
+  assert.ok(header.length < 100, `header should stay narrow, was ${header.length}`);
 });

@@ -1,6 +1,7 @@
 // Purchase-order math and numbering. Pure functions — unit tested in tests/logic.test.js.
 
 import { perBoxValue, baseCost, packUnits, packingFor } from './pricing.js';
+import { packColorList } from '../../data/variety-packs.js';
 
 // Coerces first. A Postgres numeric arrives as a string, and "58.80" + 4 is
 // "58.804" — arithmetic that looks like arithmetic and silently is not.
@@ -26,9 +27,23 @@ export const sumMoney = (rows, pick = (r) => r) =>
 
 /** Display name for a PO line: cleaned name + (tickets/$price) so vendors see the full spec. */
 export function lineName(product) {
-  if (!product.tickets) return product.name;
-  return `${product.name} (${product.tickets}/$${product.price_per_ticket || 1})`;
+  const base = product.tickets
+    ? `${product.name} (${product.tickets}/$${product.price_per_ticket || 1})`
+    : product.name;
+  // A variety pack has to name its colours ON THE ORDER, not just in whatever
+  // renders it later. "One colour pack" is not something a distributor can pick,
+  // and a list resolved at display time would restate an old PO with today's
+  // colours the first time the pack changes. Same reason the name is snapshotted
+  // at all. Second line, so the table column stays the width of a name.
+  const colors = packColorList(product.id);
+  return colors ? `${base}\ncolours: ${colors}` : base;
 }
+
+/** The first line of a snapshot — the name itself, without any colour list under it. */
+export const snapshotHead = (s) => String(s ?? '').split('\n')[0];
+
+/** Anything under the name: the colour list, or nothing. */
+export const snapshotRest = (s) => String(s ?? '').split('\n').slice(1);
 
 /**
  * Totals for one vendor's lines.

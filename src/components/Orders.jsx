@@ -278,7 +278,7 @@ export default function Orders() {
                   return (
                     <tr key={l.id}>
                       <td className="first">
-                        {l.name_snapshot}
+                        <span style={{ whiteSpace: 'pre-line' }}>{l.name_snapshot}</span>
                         {l.price_tbd && <span className="badge b-gold" style={{ marginLeft: 6 }}
                           title="Went out with a ? — the distributor sends their price and we reissue">awaiting price</span>}
                       </td>

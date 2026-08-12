@@ -179,7 +179,7 @@ export default function Review() {
                 <tbody>
                   {d.lines.map((l, i) => (
                     <tr key={i}>
-                      <td className="first">{l.name_snapshot}</td>
+                      <td className="first" style={{ whiteSpace: 'pre-line' }}>{l.name_snapshot}</td>
                       <td className="r mono">×{l.qty}</td>
                       <td className="r mono dimmer" style={{ fontSize: 11 }}>
                         {l.pack_units > 1 ? `${fmtMoney(l.base_cost)} ×${l.pack_units}` : ''}
