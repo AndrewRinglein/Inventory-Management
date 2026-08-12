@@ -7,6 +7,7 @@
 // named human (configured in Settings → Sender identity).
 
 import { fmtMoney, round2, poTotals } from './po.js';
+import { packColorList } from '../../data/variety-packs.js';
 
 /**
  * Each hall has its own person on the emails (Sagit for SC, Shelly for RWC).
@@ -148,6 +149,8 @@ function poBody(po, vendor, hallName, hallAddress, sender, text = {}) {
   // the tax stops being a checkable percentage of the subtotal once either of
   // these is in play, so the label has to say what it IS a percentage of
   const qualifyTax = anyPacking || exemptTotal > 0;
+  const totalW = Math.max(20, taxLabel(vendor, qualifyTax).length + 1);
+  const totalLine = (label, amount) => `  ${label.padEnd(totalW)}${fmtMoney(amount).padStart(12)}`;
   const vars = { hall: hallName, po: po.num, vendor: vendor.name, date };
   const extra = (text?.note ?? '').trim();
   return [
@@ -161,16 +164,26 @@ function poBody(po, vendor, hallName, hallAddress, sender, text = {}) {
     ``,
     lineHeader(w),
     '-'.repeat(4 + 3 + w.name + w.base + w.units + w.pack + w.total),
-    ...po.lines.map((l) => lineRow(l, w)),
+    // a variety pack has to say what is in it, or "one colour pack" is all the
+    // vendor has been told and the colours get settled at the loading dock
+    ...po.lines.flatMap((l) => {
+      const colors = packColorList(l.product_id);
+      return colors
+        ? [lineRow(l, w), `${' '.repeat(7)}colours: ${colors}`]
+        : [lineRow(l, w)];
+    }),
     '-'.repeat(4 + 3 + w.name + w.base + w.units + w.pack + w.total),
     ``,
-    // split the subtotal so both sides can see what was goods and what was packing
-    anyPacking ? `  ${'Stock:'.padEnd(20)}${fmtMoney(goodsTotal).padStart(12)}` : null,
-    anyPacking ? `  ${'Packing:'.padEnd(20)}${fmtMoney(packingTotal).padStart(12)}` : null,
-    exemptTotal > 0 ? `  ${'Of which exempt:'.padEnd(20)}${fmtMoney(exemptTotal).padStart(12)}` : null,
-    `  ${'Subtotal:'.padEnd(20)}${fmtMoney(po.subtotal).padStart(12)}`,
-    `  ${taxLabel(vendor, qualifyTax).padEnd(20)}${fmtMoney(po.tax).padStart(12)}`,
-    `  ${'Total:'.padEnd(20)}${fmtMoney(po.total).padStart(12)}`,
+    // split the subtotal so both sides can see what was goods and what was packing.
+    // one column width for all of them, sized to the widest label present — the
+    // qualified tax label is longer than the plain one and a fixed pad pushed its
+    // figure out of line with every other number on the page
+    anyPacking ? totalLine('Stock:', goodsTotal) : null,
+    anyPacking ? totalLine('Packing:', packingTotal) : null,
+    exemptTotal > 0 ? totalLine('Of which exempt:', exemptTotal) : null,
+    totalLine('Subtotal:', po.subtotal),
+    totalLine(taxLabel(vendor, qualifyTax), po.tax),
+    totalLine('Total:', po.total),
     n ? `  (covers the priced lines only — the "?" items are on top of this)` : null,
     anyPacking ? `  Packing is included in each line above, not added separately, and is not taxed.` : null,
     ``,
@@ -286,9 +299,12 @@ export function poHtml(po, vendor, hallName, hallAddress, sender, text = {}) {
       ? 'price to be confirmed'
       : [`${money(base)} each`, deals > 1 ? `× ${deals} deals` : null,
          packing > 0 ? `+ ${money(packing)} packing` : null].filter(Boolean).join(' ');
+    // a variety pack names its colours, so the vendor picks the same eleven we did
+    const colors = packColorList(l.product_id);
     return `<tr>
       <td class="num l">${l.qty}</td>
-      <td class="l">${esc(l.name_snapshot)}<span class="detail">${detail}</span></td>
+      <td class="l">${esc(l.name_snapshot)}<span class="detail">${detail}</span>${
+        colors ? `<span class="detail">colours: ${esc(colors)}</span>` : ''}</td>
       <td class="num hide-sm">${l.price_tbd ? tbd : money(base)}</td>
       <td class="num hide-sm">${deals > 1 ? '&times;' + deals : ''}</td>
       <td class="num hide-sm">${packing > 0 ? money(packing) : ''}</td>
