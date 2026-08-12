@@ -247,6 +247,10 @@ export class DemoStore {
     const sess = (this.db.sessions || []).find((x) => x.id === sessionId);
     if (!sess) throw new Error('Session not found');
     if (sess.applied_at) throw new Error('That session has already been taken out of stock.');
+    if (sess.historical) {
+      throw new Error('That session is historical — it is there for run-rate history, '
+        + 'not for stock. Nothing to take off the shelf.');
+    }
     // mirrors supabaseStore: applied_at is stamped last, so a run that died partway
     // leaves boxes consumed and the flag clear. The boxes are the durable record.
     if ((this.db.boxes || []).some((b) => b.session_id === sessionId)) {

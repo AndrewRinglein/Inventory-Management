@@ -255,6 +255,13 @@ export class SupabaseStore {
   async applySession(sessionId, plays) {
     const sess = ok(await this.sb.from('sessions').select('*').eq('id', sessionId).single());
     if (sess.applied_at) throw new Error('That session has already been taken out of stock.');
+    // Historical programmes describe play from before the system held inventory.
+    // The stock they came from was never recorded, so applying one would invent
+    // consumption against today's shelf. The database enforces this too.
+    if (sess.historical) {
+      throw new Error('That session is historical — it is there for run-rate history, '
+        + 'not for stock. Nothing to take off the shelf.');
+    }
     // applied_at is stamped at the END, so a run that dies partway — a dropped
     // connection, a closed laptop — leaves boxes consumed and the session still
     // looking unapplied. Pressing apply again would take a SECOND box off the
