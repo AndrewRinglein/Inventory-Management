@@ -7,6 +7,29 @@ import { perBoxValue } from '../logic/pricing.js';
 
 const ok = ({ data, error }) => { if (error) throw new Error(error.message); return data; };
 
+const HALLS = { sc: 'Santa Clara', rwc: 'Redwood City' };
+
+/** "Santa Clara — swapped 1 Whole Enchiladas for 1 American Heroes" */
+function adjustmentLabel(hallId, reason, lines, prods) {
+  const nm = (l) => prods[l.product_id]?.name || l.product_id;
+  const out = lines.filter((l) => Number(l.delta) < 0);
+  const inn = lines.filter((l) => Number(l.delta) > 0);
+  const list = (xs) => xs.map((l) => `${Math.abs(Number(l.delta))} ${nm(l)}`).join(' and ');
+  const hall = HALLS[hallId] || hallId;
+  if (reason === 'swap' && out.length && inn.length) {
+    return `${hall} — swapped ${list(out)} for ${list(inn)}`;
+  }
+  if (reason === 'transfer') {
+    const to = lines.find((l) => Number(l.delta) > 0);
+    return `${hall} — transferred ${list(out.length ? out : inn)}`
+      + (to?.hall_id && to.hall_id !== hallId ? ` to ${HALLS[to.hall_id] || to.hall_id}` : '');
+  }
+  const word = { damaged: 'wrote off', miscount: 'recounted', found: 'found',
+                 returned: 'returned to the distributor' }[reason] || 'adjusted';
+  const all = [...out, ...inn];
+  return `${hall} — ${word} ${list(all)}`;
+}
+
 // PostgREST caps every response at 1000 rows and gives no warning when it truncates —
 // a hall with more than 1000 boxes would silently show wrong counts and values.
 // Page through until a short page comes back.
@@ -221,6 +244,91 @@ export class SupabaseStore {
       ok(await this.sb.from('boxes').update({ state: 'missing' }).in('id', ids));
     }
     await this.logEvent('adjust', 'products', product.id, { label, note, delta, hall: hallId });
+  }
+
+  // ---- adjustments with a reason ----
+  //
+  // The shape that matters is the SWAP: a distributor is out of one game and
+  // hands over another. Recorded as two separate adjustments those rows only
+  // connect in the head of whoever typed both, and reversing one leaves the
+  // other lying. So an adjustment is a header with a reason and a note, plus one
+  // line per product — a swap is one line out and one line in, a transfer is the
+  // same with a different hall on each line.
+  //
+  // Counts are deliberately not required to balance. Distributors hand over two
+  // of something for one of something else all the time, and a rule that forces
+  // a match just teaches people to enter numbers that aren't true.
+  async addAdjustment({ hallId, reason, note, lines, actor = 'app' }) {
+    const clean = (lines || []).filter((l) => l.product_id && Number(l.delta));
+    if (!clean.length) throw new Error('An adjustment needs at least one game and a count');
+    if (!String(note || '').trim()) throw new Error('An adjustment needs a note saying why');
+
+    const ids = [...new Set(clean.map((l) => l.product_id))];
+    const prods = Object.fromEntries(
+      (ok(await this.sb.from('products').select('*').in('id', ids))).map((p) => [p.id, p]));
+
+    const head = ok(await this.sb.from('stock_adjustments').insert({
+      hall_id: hallId, reason, note: String(note).trim(), actor,
+    }).select().single());
+
+    try {
+      for (const l of clean) {
+        const p = prods[l.product_id];
+        if (!p) throw new Error('Unknown game on an adjustment line');
+        const lineHall = l.hall_id || hallId;
+        const each = perBoxValue(p);
+        const n = Math.abs(Number(l.delta));
+        ok(await this.sb.from('stock_adjustment_lines').insert({
+          adjustment_id: head.id, hall_id: lineHall, product_id: p.id,
+          delta: Number(l.delta), each_value: each,
+        }).select('id'));
+
+        if (Number(l.delta) > 0) {
+          ok(await this.sb.from('boxes').insert(Array.from({ length: n }, () => ({
+            hall_id: lineHall, product_id: p.id, state: 'in_inventory', cost: each,
+            serial: '', received_at: new Date().toISOString(), adjustment_id: head.id,
+          }))).select('id'));
+        } else {
+          // prefer boxes not set aside for a session, same as adjustStock
+          const free = ok(await this.sb.from('boxes').select('id')
+            .eq('hall_id', lineHall).eq('product_id', p.id).eq('state', 'in_inventory')
+            .is('session_tag', null).limit(n));
+          const pick = free.map((b) => b.id);
+          if (pick.length < n) {
+            const extra = ok(await this.sb.from('boxes').select('id')
+              .eq('hall_id', lineHall).eq('product_id', p.id).eq('state', 'in_inventory')
+              .not('session_tag', 'is', null).limit(n - pick.length));
+            pick.push(...extra.map((b) => b.id));
+          }
+          if (pick.length < n) {
+            throw new Error(`Only ${pick.length} ${p.name} in stock — cannot take ${n} off`);
+          }
+          ok(await this.sb.from('boxes').update({ state: 'missing', adjustment_id: head.id })
+            .in('id', pick));
+        }
+      }
+    } catch (e) {
+      // a half-written adjustment is worse than none: undo the header and its
+      // lines (boxes created so far cascade off nothing, so clear them first)
+      ok(await this.sb.from('boxes').delete().eq('adjustment_id', head.id).eq('state', 'in_inventory'));
+      ok(await this.sb.from('boxes').update({ state: 'in_inventory', adjustment_id: null })
+        .eq('adjustment_id', head.id).eq('state', 'missing'));
+      ok(await this.sb.from('stock_adjustments').delete().eq('id', head.id));
+      throw e;
+    }
+
+    await this.logEvent('adjust', 'stock_adjustments', head.id, {
+      label: adjustmentLabel(hallId, reason, clean, prods),
+      note: String(note).trim(), reason,
+      lines: clean.map((l) => ({ product: prods[l.product_id]?.name, delta: Number(l.delta) })),
+      hall: hallId,
+    });
+    return head;
+  }
+
+  async getAdjustments(hallId, limit = 300) {
+    return fetchAll(() => this.sb.from('adjustment_history').select('*')
+      .eq('hall_id', hallId).order('at', { ascending: false }).limit(limit));
   }
 
   // ---- session use ----

@@ -238,6 +238,61 @@ export class DemoStore {
     this._save();
   }
 
+  // ---- adjustments with a reason ---- (mirrors supabaseStore)
+  async addAdjustment({ hallId, reason, note, lines, actor = 'demo' }) {
+    const clean = (lines || []).filter((l) => l.product_id && Number(l.delta));
+    if (!clean.length) throw new Error('An adjustment needs at least one game and a count');
+    if (!String(note || '').trim()) throw new Error('An adjustment needs a note saying why');
+    const head = { id: uid(), hall_id: hallId, at: new Date().toISOString(),
+                   reason, note: String(note).trim(), actor };
+    (this.db.stock_adjustments ||= []).push(head);
+    const names = {};
+    for (const l of clean) {
+      const p = this.db.products.find((x) => x.id === l.product_id);
+      if (!p) throw new Error('Unknown game on an adjustment line');
+      names[l.product_id] = p.name;
+      const lineHall = l.hall_id || hallId;
+      const each = perBoxValue(p);
+      const n = Math.abs(Number(l.delta));
+      (this.db.stock_adjustment_lines ||= []).push({
+        id: uid(), adjustment_id: head.id, hall_id: lineHall,
+        product_id: p.id, delta: Number(l.delta), each_value: each });
+      if (Number(l.delta) > 0) {
+        for (let i = 0; i < n; i++) this.db.boxes.push({
+          id: uid(), hall_id: lineHall, product_id: p.id, state: 'in_inventory',
+          cost: each, serial: '', session_tag: null, adjustment_id: head.id,
+          received_at: new Date().toISOString() });
+      } else {
+        const pool = this.db.boxes.filter((b) => b.hall_id === lineHall
+          && b.product_id === p.id && b.state === 'in_inventory');
+        pool.sort((a, b) => (a.session_tag ? 1 : 0) - (b.session_tag ? 1 : 0));
+        if (pool.length < n) throw new Error(`Only ${pool.length} ${p.name} in stock — cannot take ${n} off`);
+        for (const b of pool.slice(0, n)) { b.state = 'missing'; b.adjustment_id = head.id; }
+      }
+    }
+    const parts = clean.map((l) => `${Number(l.delta) > 0 ? '+' : '−'}${Math.abs(Number(l.delta))} ${names[l.product_id]}`);
+    this._event('adjust', 'stock_adjustments', head.id, {
+      label: `${hallId === 'sc' ? 'Santa Clara' : 'Redwood City'} — ${reason}: ${parts.join(', ')}`,
+      note: head.note, reason, hall: hallId });
+    this._save();
+    return head;
+  }
+
+  async getAdjustments(hallId) {
+    const heads = (this.db.stock_adjustments || []).filter((a) => a.hall_id === hallId);
+    const byId = Object.fromEntries(heads.map((h) => [h.id, h]));
+    return (this.db.stock_adjustment_lines || [])
+      .filter((l) => byId[l.adjustment_id])
+      .map((l) => {
+        const a = byId[l.adjustment_id];
+        const p = this.db.products.find((x) => x.id === l.product_id) || {};
+        return { ...a, ...l, booked_hall: a.hall_id, hall_id: l.hall_id,
+                 game: p.name, game_type: p.type,
+                 value_change: Math.round(l.delta * l.each_value * 100) / 100 };
+      })
+      .sort((x, y) => String(y.at).localeCompare(String(x.at)));
+  }
+
   // ---- session use ---- (demo mirror of the Supabase implementation)
   async getSessions() { return [...(this.db.sessions || [])]; }
   async getSessionPlays(sessionId) { return (this.db.session_plays || []).filter((p) => p.session_id === sessionId); }

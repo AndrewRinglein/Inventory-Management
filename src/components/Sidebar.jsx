@@ -41,6 +41,7 @@ export default function Sidebar() {
       <Item id="orders" label="Open Orders" badge={openPos || null} />
       <Item id="accounting" label="Accounting" badge={openPay || null} />
       <Item id="intake" label="Receiving" />
+      <Item id="history" label="History" title="Everything that has happened — adjustments, deliveries, orders, sessions" />
       <div className="sb-sec">Admin</div>
       <Item id="games" label={can('editCatalog') ? 'Add / Update Games' : 'Game Catalog'}
         badge={toUpdate || null} gold

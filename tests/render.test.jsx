@@ -24,6 +24,8 @@ import Games from '../src/components/Games.jsx';
 import SessionUse from '../src/components/SessionUse.jsx';
 import AddDelivery from '../src/components/AddDelivery.jsx';
 import Assign from '../src/components/Assign.jsx';
+import History from '../src/components/History.jsx';
+import Adjust from '../src/components/Adjust.jsx';
 import SettingsScreen from '../src/components/SettingsScreen.jsx';
 import Sidebar from '../src/components/Sidebar.jsx';
 
@@ -64,6 +66,7 @@ const store = new Proxy({}, {
     return async () => ({
       getSessions: sessions, getAllSessionPlays: plays, getSessionPlays: plays,
       getPoLines: [], getEmails: [], getEvents: [], getDeliveries: [], getAssignments: [],
+      getAdjustments: [],
     }[k] ?? []);
   },
 });
@@ -82,8 +85,9 @@ const ctx = {
 
 const SCREENS = {
   Dashboard, Purchase, Review, Inventory, OpenBoxes, Orders, Accounting,
-  Receiving, Games, SessionUse, Assign, SettingsScreen, Sidebar,
+  Receiving, Games, SessionUse, Assign, History, SettingsScreen, Sidebar,
   AddDelivery: (p) => <AddDelivery onClose={() => {}} {...p} />,
+  Adjust: (p) => <Adjust onClose={() => {}} {...p} />,
 };
 
 let failed = 0;

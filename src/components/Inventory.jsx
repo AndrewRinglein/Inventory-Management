@@ -1,5 +1,6 @@
 import React, { useContext, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
+import Adjust from './Adjust.jsx';
 import { fmtMoney, ticketPrice } from '../lib/logic/po.js';
 import { countByProduct } from '../lib/logic/boxes.js';
 
@@ -30,6 +31,7 @@ export default function Inventory() {
   const [assignTag, setAssignTag] = useState('');
   const [assignQty, setAssignQty] = useState(1);
   const [adjustMode, setAdjustMode] = useState(false);
+  const [showAdjust, setShowAdjust] = useState(false);
   const [adj, setAdj] = useState(null);      // { p, from, to }
   const [adjNote, setAdjNote] = useState('');
   const [saving, setSaving] = useState(false);
@@ -151,6 +153,7 @@ export default function Inventory() {
 
   return (
     <div>
+      {showAdjust && <Adjust onClose={() => setShowAdjust(false)} />}
       <div className="page-head">
         <div className="h1">Inventory — {hall === 'sc' ? 'Santa Clara' : 'Redwood City'}</div>
         <select value={typeF} onChange={(e) => setTypeF(e.target.value)} title="Game type">
@@ -170,10 +173,16 @@ export default function Inventory() {
           )}
         </span>
         {editable && (
-          <button className={'btn ' + (adjustMode ? 'orange' : 'ghost')} onClick={() => setAdjustMode(!adjustMode)}
-            title="Hand-correct a count that doesn't match the shelf">
-            {adjustMode ? '🔓 Done adjusting' : '🔒 Adjust inventory'}
-          </button>
+          <>
+            <button className="btn ghost" onClick={() => setShowAdjust(true)}
+              title="Record a swap, damage, a miscount or a transfer — with a note and a reason">
+              ✎ Adjust stock
+            </button>
+            <button className={'btn ' + (adjustMode ? 'orange' : 'ghost')} onClick={() => setAdjustMode(!adjustMode)}
+              title="Hand-correct a count that doesn't match the shelf">
+              {adjustMode ? '🔓 Done adjusting' : '🔒 Adjust inventory'}
+            </button>
+          </>
         )}
       </div>
       {adjustMode && (
