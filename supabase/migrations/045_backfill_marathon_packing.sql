@@ -1,6 +1,6 @@
 -- Put Marathon's $4 packing onto the POs that were sent before we knew about it.
 --
--- DRAFT — not applied. Run after 044.
+-- APPLIED 2026-08-17 via execute_sql.
 --
 -- These three orders are already with Marathon and their invoices will carry the
 -- charge. Rather than resend a PO to tell a vendor about their own fee, the stored
@@ -62,3 +62,18 @@ commit;
 --   SC-2026-08-MD-003  $22,117.92 -> $22,425.92   (+$308, 77 flash boxes)
 --
 -- Tax unchanged on all three: $87.75, $258.77, $1,964.92.
+
+-- WHAT IT ACTUALLY DID, 2026-08-17:
+--
+--   RWC-2026-08-MD-001    $987.75 ->  $1,015.75   (+$28,  7 flash boxes)
+--   RWC-2026-08-MD-002  $2,912.77 ->  $2,968.77   (+$56, 14 flash boxes)
+--
+-- SC-2026-08-MD-003 is in the note above as a third order. It was archived on
+-- 08-12 and is 'closed', so the status filter correctly passed it by — that PO
+-- never created a box and was superseded by MD-004.
+--
+-- SC-2026-08-MD-005 was matched by the filter but already carried its packing
+-- ($312 on 78 flash boxes), so recomputing left it untouched. That is the
+-- idempotence the rebuild-from-lines approach was for.
+--
+-- Tax unchanged on both, as designed: $87.75 and $258.77.

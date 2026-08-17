@@ -318,7 +318,11 @@ export default function Receiving() {
         })));
         receivedLines.push(row);
       }
-      await store.confirmShipment(shipment.id);
+      await store.confirmShipment(shipment.id, {
+        invoice_no: invoiceNo,
+        boxes: receivedLines.reduce((a, l) => a + l.qty, 0),
+        missing: missingLines.reduce((a, l) => a + l.qty, 0),
+      });
       await store.setPoStatus(cur.id, missingLines.length ? 'partial' : 'closed');
 
       // build the two follow-up emails for review
