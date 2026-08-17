@@ -6,7 +6,7 @@
 // the situation in plain sentences, makes one clear ask, and is signed by a
 // named human (configured in Settings → Sender identity).
 
-import { fmtMoney, round2 } from './po.js';
+import { fmtMoney, round2, poTotals, snapshotHead, snapshotRest } from './po.js';
 
 /**
  * Each hall has its own person on the emails (Sagit for SC, Shelly for RWC).
@@ -57,7 +57,10 @@ const money = (n) => fmtMoney(n);
  */
 const line = (l) => {
   const each = Number(l.cost) + (Number(l.packing_each) || 0);
-  return `  ${String(l.qty).padStart(3)} x ${l.name_snapshot.padEnd(40)}  ${fmtMoney(each).padStart(10)} ea  =${fmtMoney(l.qty * each).padStart(12)}`;
+  // the snapshot may carry a colour list under the name (see lineName)
+  const head = `  ${String(l.qty).padStart(3)} x ${snapshotHead(l.name_snapshot).padEnd(40)}  ${fmtMoney(each).padStart(10)} ea  =${fmtMoney(l.qty * each).padStart(12)}`;
+  const rest = snapshotRest(l.name_snapshot);
+  return rest.length ? [head, ...rest.map((r) => ' '.repeat(8) + r)].join('\n') : head;
 };
 
 function lineRow(l, w) {
@@ -68,15 +71,19 @@ function lineRow(l, w) {
   // up as written: base x units x qty, plus packing, equals the line total
   const packing = packEach * l.qty;
   const total = l.price_tbd ? '?' : money(l.qty * (Number(l.cost) + packEach));
-  return [
+  const first = [
     String(l.qty).padStart(4),
     ' x ',
-    l.name_snapshot.padEnd(w.name),
+    snapshotHead(l.name_snapshot).padEnd(w.name),
     (l.price_tbd ? '?' : money(base)).padStart(w.base),
     (units > 1 ? `x${units}` : '').padStart(w.units),
     (packing > 0 ? money(packing) : '').padStart(w.pack),
     total.padStart(w.total),
   ].join('');
+  // a colour list sits under its line, indented to the Item column, so the table
+  // keeps the width of a name rather than the width of eleven colours
+  const rest = snapshotRest(l.name_snapshot);
+  return rest.length ? [first, ...rest.map((r) => ' '.repeat(7) + r)].join('\n') : first;
 }
 
 // "Unit" is what gets ordered and invoiced — a box, a set, a case. "Deals" is how
@@ -94,7 +101,7 @@ function lineHeader(w) {
 /** Column widths sized to the content, so nothing is cut and nothing floats. */
 function widths(lines) {
   return {
-    name: Math.max(20, ...lines.map((l) => l.name_snapshot.length)) + 2,
+    name: Math.max(20, ...lines.map((l) => snapshotHead(l.name_snapshot).length)) + 2,
     base: 12, units: 7, pack: 11, total: 14,
   };
 }
@@ -148,6 +155,8 @@ function poBody(po, vendor, hallName, hallAddress, sender, text = {}) {
   // the tax stops being a checkable percentage of the subtotal once either of
   // these is in play, so the label has to say what it IS a percentage of
   const qualifyTax = anyPacking || exemptTotal > 0;
+  const totalW = Math.max(20, taxLabel(vendor, qualifyTax).length + 1);
+  const totalLine = (label, amount) => `  ${label.padEnd(totalW)}${fmtMoney(amount).padStart(12)}`;
   const vars = { hall: hallName, po: po.num, vendor: vendor.name, date };
   const extra = (text?.note ?? '').trim();
   return [
@@ -164,13 +173,16 @@ function poBody(po, vendor, hallName, hallAddress, sender, text = {}) {
     ...po.lines.map((l) => lineRow(l, w)),
     '-'.repeat(4 + 3 + w.name + w.base + w.units + w.pack + w.total),
     ``,
-    // split the subtotal so both sides can see what was goods and what was packing
-    anyPacking ? `  ${'Stock:'.padEnd(20)}${fmtMoney(goodsTotal).padStart(12)}` : null,
-    anyPacking ? `  ${'Packing:'.padEnd(20)}${fmtMoney(packingTotal).padStart(12)}` : null,
-    exemptTotal > 0 ? `  ${'Of which exempt:'.padEnd(20)}${fmtMoney(exemptTotal).padStart(12)}` : null,
-    `  ${'Subtotal:'.padEnd(20)}${fmtMoney(po.subtotal).padStart(12)}`,
-    `  ${taxLabel(vendor, qualifyTax).padEnd(20)}${fmtMoney(po.tax).padStart(12)}`,
-    `  ${'Total:'.padEnd(20)}${fmtMoney(po.total).padStart(12)}`,
+    // split the subtotal so both sides can see what was goods and what was packing.
+    // one column width for all of them, sized to the widest label present — the
+    // qualified tax label is longer than the plain one and a fixed pad pushed its
+    // figure out of line with every other number on the page
+    anyPacking ? totalLine('Stock:', goodsTotal) : null,
+    anyPacking ? totalLine('Packing:', packingTotal) : null,
+    exemptTotal > 0 ? totalLine('Of which exempt:', exemptTotal) : null,
+    totalLine('Subtotal:', po.subtotal),
+    totalLine(taxLabel(vendor, qualifyTax), po.tax),
+    totalLine('Total:', po.total),
     n ? `  (covers the priced lines only — the "?" items are on top of this)` : null,
     anyPacking ? `  Packing is included in each line above, not added separately, and is not taxed.` : null,
     ``,
@@ -288,7 +300,8 @@ export function poHtml(po, vendor, hallName, hallAddress, sender, text = {}) {
          packing > 0 ? `+ ${money(packing)} packing` : null].filter(Boolean).join(' ');
     return `<tr>
       <td class="num l">${l.qty}</td>
-      <td class="l">${esc(l.name_snapshot)}<span class="detail">${detail}</span></td>
+      <td class="l">${esc(snapshotHead(l.name_snapshot))}<span class="detail">${detail}</span>${
+        snapshotRest(l.name_snapshot).map((r) => `<span class="detail">${esc(r)}</span>`).join('')}</td>
       <td class="num hide-sm">${l.price_tbd ? tbd : money(base)}</td>
       <td class="num hide-sm">${deals > 1 ? '&times;' + deals : ''}</td>
       <td class="num hide-sm">${packing > 0 ? money(packing) : ''}</td>
@@ -450,11 +463,28 @@ export function buildShortageEmail(po, vendor, hallName, missingLines, sender = 
 }
 
 export function buildDeliveredEmail(po, vendor, hallName, invoiceNo, receivedLines, missingLines, sender = {}, accountingName = '') {
-  const received = round2(receivedLines.reduce((a, l) => a + lineTotal(l), 0));
-  const tax = round2(received * (Number(vendor.tax_rate) || 0));
-  const owed = round2(received + tax);
+  // The bill and the order it came from must be worked out the same way, or the
+  // app disagrees with itself and then prints its own disagreement as a variance
+  // to chase. So this runs the received lines through poTotals — the same engine
+  // the PO used — instead of re-deriving the money here.
+  //
+  // Doing it by hand got two things wrong, and both of them overcharged the hall:
+  // it taxed the packing/collation service, which is not goods, and it ignored
+  // products.taxable, so daubers bought for resale were taxed too. A Bingo Vision
+  // case with $1,600 of packing was billed $156.00 over; a $987 dauber invoice was
+  // billed $96.23 over. That number is written straight into payments.amount.
+  const t = poTotals(receivedLines, Number(vendor?.tax_rate) || 0);
+  const received = t.subtotal;
+  const tax = t.tax;
+  const owed = t.total;
   const variance = round2((Number(po.total) || 0) - owed);
   const short = missingLines.length > 0;
+  // show the split only when it explains something: packing charged, or an exemption
+  const anyPacking = t.packing > 0;
+  const qualifyTax = anyPacking || t.exempt > 0;
+  // widest label wins, so every figure lands in the same column
+  const labelW = Math.max(20, taxLabel(vendor, qualifyTax).length + 1);
+  const tRow = (label, amount) => `  ${label.padEnd(labelW)}${fmtMoney(amount).padStart(11)}`;
 
   return {
     kind: 'delivered', po_num: po.num, to: '(accounting)',
@@ -482,18 +512,27 @@ export function buildDeliveredEmail(po, vendor, hallName, invoiceNo, receivedLin
         ...missingLines.map(line),
       ] : []),
       ``,
-      `  ${'Received subtotal:'.padEnd(20)}${fmtMoney(received).padStart(11)}`,
-      `  ${`Tax (${(vendor.tax_rate * 100).toFixed(2)}%):`.padEnd(20)}${fmtMoney(tax).padStart(11)}`,
-      `  ${'AMOUNT TO PAY:'.padEnd(20)}${fmtMoney(owed).padStart(11)}`,
+      // one column width for every money row, sized to the widest label present —
+      // "Tax (9.75% on taxable stock):" is longer than the old plain "Tax (9.75%):"
+      // and a fixed pad left the figures in a ragged line down the page
+      anyPacking ? tRow('Stock:', t.goods) : null,
+      anyPacking ? tRow('Packing:', t.packing) : null,
+      t.exempt > 0 ? tRow('Of which exempt:', t.exempt) : null,
+      tRow('Received subtotal:', received),
+      tRow(taxLabel(vendor, qualifyTax), tax),
+      tRow('AMOUNT TO PAY:', owed),
+      qualifyTax
+        ? `\n  Tax is charged on taxable stock only — packing is a service and supplies bought for resale are exempt.`
+        : null,
       ``,
-      `  ${'Original PO total:'.padEnd(20)}${fmtMoney(po.total).padStart(11)}`,
-      `  ${'Difference:'.padEnd(20)}${fmtMoney(variance).padStart(11)}${variance !== 0 ? '   <- worth a look before paying' : ''}`,
+      tRow('Original PO total:', po.total),
+      `${tRow('Difference:', variance)}${variance !== 0 ? '   <- worth a look before paying' : ''}`,
       ``,
       short
         ? `I've asked ${vendor.contact_name || vendor.name} about the missing items and will let you know whether they're backordered or credited.`
         : `Nothing outstanding on this one.`,
       ...signature(sender, hallName),
-    ].join('\n'),
+    ].filter((l) => l !== null).join('\n'),
     amount: owed,
   };
 }

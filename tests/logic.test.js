@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { poTotals, nextPoNum, buildDrafts, lineName, round2, packingLine, fmtMoney, ticketPrice } from '../src/lib/logic/po.js';
+import { poTotals, nextPoNum, buildDrafts, lineName, round2, packingLine, fmtMoney, ticketPrice,
+  snapshotHead, snapshotRest } from '../src/lib/logic/po.js';
 import { canTransition, transition, countByProduct } from '../src/lib/logic/boxes.js';
 import { resolveScan } from '../src/lib/logic/scan.js';
 import { buildOrderEmails, buildDeliveredEmail, buildShortageEmail, senderFor } from '../src/lib/logic/emails.js';
@@ -9,6 +10,7 @@ import { isMisc, passesFilters } from '../src/lib/logic/categories.js';
 import { needsSetup, needsCost, needsType, needsTickets, needsAnyUpdate, needsVendor, UNKNOWN_VENDOR, productsNeedingSetup } from '../src/lib/logic/setup.js';
 import { isGrabBag } from '../src/lib/logic/categories.js';
 import { priceParts, boxCost, baseCost, packUnits, packingFor } from '../src/lib/logic/pricing.js';
+import { receivedLine, missingLine, extraLine, perUnitOf, lineSplit } from '../src/lib/logic/receiving.js';
 
 // ---------- PO math ----------
 test('poTotals matches spreadsheet math (9.75% tax)', () => {
@@ -918,4 +920,157 @@ test('the printed subtotal equals the printed lines', () => {
   const printed = d.lines.reduce((a, l) => a + l.qty * (Number(l.cost) + Number(l.packing_each || 0)), 0);
   assert.equal(round2(printed), d.subtotal, 'no line may disagree with the subtotal beneath it');
   assert.equal(d.subtotal, 5613.6);
+});
+
+// ---------- the amount accounting is told to pay ----------
+//
+// These three pin the money in buildDeliveredEmail, because its result is written
+// straight into payments.amount. Every one of them failed before the fix: the old
+// code taxed the packing service, ignored products.taxable, and was handed a
+// packing figure that had not been brought down to the box.
+
+test('delivered email does not tax packing — it is a service, not goods', () => {
+  // BV case: $51,680 of stock + $1,600 collation. The vendor's own invoice taxes
+  // 51,680 -> 5,038.80, not 53,280 -> 5,194.80.
+  const po = { num: 'SC-1', total: 58318.80 };
+  const received = [{ qty: 10, name_snapshot: 'Biker', cost: 5168, packing_each: 160, taxable: true }];
+  const e = buildDeliveredEmail(po, vendors[0], 'Santa Clara', 'INV-1', received, [], SENDER, 'Jamie');
+  assert.equal(e.amount, 58318.80, 'tax base must exclude packing');
+  assert.match(e.body, /Stock:\s+\$51,680\.00/);
+  assert.match(e.body, /Packing:\s+\$1,600\.00/);
+  assert.match(e.body, /Difference:\s+\$0\.00/, 'the bill must agree with the PO it came from');
+});
+
+test('delivered email honours products.taxable — daubers are exempt', () => {
+  // Marathon 5812121: all daubers, $987.00 net, no tax line on the invoice at all.
+  const po = { num: 'SC-2', total: 987 };
+  const received = [{ qty: 10, name_snapshot: 'Daubers', cost: 98.70, packing_each: 0, taxable: false }];
+  const e = buildDeliveredEmail(po, vendors[1], 'Santa Clara', 'INV-2', received, [], SENDER, 'Jamie');
+  assert.equal(e.amount, 987, 'an exempt line must not be taxed');
+  assert.match(e.body, /Of which exempt:\s+\$987\.00/);
+});
+
+test('delivered email taxes a mixed load correctly', () => {
+  const po = { num: 'SC-3', total: 0 };
+  const received = [
+    { qty: 1, name_snapshot: 'Game', cost: 1000, packing_each: 100, taxable: true },
+    { qty: 1, name_snapshot: 'Daubers', cost: 500, packing_each: 0, taxable: false },
+  ];
+  const e = buildDeliveredEmail(po, vendors[0], 'Santa Clara', 'INV-3', received, [], SENDER, '');
+  // goods 1500, packing 100, subtotal 1600; taxable goods 1000 -> tax 97.50
+  assert.equal(e.amount, 1697.50);
+});
+
+test('receivedLine brings EVERY per-unit figure down to the box', () => {
+  // A case of 16 totes at $5,168 carrying $160 of collation is $323 + $10 a tote —
+  // not $323 + $160. This calls the real function Receiving calls.
+  const l = { product_id: 'P163', name_snapshot: 'Biker', qty: 1, cost: 5168, packing_each: 160, split_boxes: 16, taxable: true };
+  const r = receivedLine(l, null, 16, 5168);
+  assert.equal(r.cost, 323, 'cost per tote');
+  assert.equal(r.packing_each, 10, 'packing per tote — NOT the case figure');
+  assert.equal(r.qty, 16);
+  assert.equal(r.price_tbd, false);
+  // and the whole case bills exactly what one unsplit case bills
+  const e = buildDeliveredEmail({ num: 'SC-4', total: 5831.88 }, vendors[0], 'Santa Clara', 'INV-4', [r], [], SENDER, '');
+  assert.equal(e.amount, 5831.88);
+  assert.match(e.body, /Difference:\s+\$0\.00/);
+});
+
+test('receivedLine falls back to the catalog split when the line has none', () => {
+  const l = { product_id: 'P163', name_snapshot: 'Biker', qty: 1, cost: 5168, packing_each: 160 };
+  const r = receivedLine(l, { split_boxes: 16 }, 16, 5168);
+  assert.equal(r.cost, 323);
+  assert.equal(r.packing_each, 10);
+});
+
+test('extraLine divides an off-PO price down and reads exemption off the product', () => {
+  // product.cost is an ORDERED-UNIT price; qty is a box count. Billing one
+  // against the other put a single off-PO Biker case on the invoice at $82,688.
+  const biker = { id: 'P163', name: 'Biker', cost: 5168, base_cost: 64.6, pack_units: 80, split_boxes: 16, taxable: true };
+  const x = extraLine(biker, 'Biker', 16, 5168);
+  assert.equal(x.cost, 323, 'must be the per-tote price, not the case price');
+  assert.equal(x.qty, 16);
+  assert.equal(x.taxable, true);
+  assert.equal(x.extra, true);
+  const e = buildDeliveredEmail({ num: 'X', total: 0 }, vendors[0], 'SC', 'I', [x], [], SENDER, '');
+  assert.equal(e.amount, 5671.88);
+
+  const daub = { id: 'S830', name: 'Dabbin Fever', cost: 12, base_cost: 12, pack_units: 1, split_boxes: 1, taxable: false };
+  const d = extraLine(daub, 'Dabbin Fever', 10, 12);
+  assert.equal(d.cost, 12);
+  assert.equal(d.taxable, false, 'an exempt supply stays exempt when it arrives off-PO');
+  assert.equal(buildDeliveredEmail({ num: 'X', total: 0 }, vendors[1], 'SC', 'I', [d], [], SENDER, '').amount, 120);
+});
+
+test('missingLine is priced like what arrived, and only stays TBD with no price at all', () => {
+  const l = { product_id: 'P163', name_snapshot: 'Biker', qty: 1, cost: 5168, packing_each: 160, split_boxes: 16, price_tbd: true };
+  assert.equal(missingLine(l, null, 4, 5168).price_tbd, false, 'a price was supplied');
+  assert.equal(missingLine(l, null, 4, 5168).cost, 323);
+  assert.equal(missingLine(l, null, 4, 0).price_tbd, true, 'still nothing to quote');
+});
+
+test('perUnitOf never divides by zero and copes with junk', () => {
+  assert.equal(perUnitOf(160, 16), 10);
+  assert.equal(perUnitOf(160, 0), 160);
+  assert.equal(perUnitOf(160, null), 160);
+  assert.equal(perUnitOf(undefined, 16), 0);
+  assert.equal(perUnitOf('160', '16'), 10);
+});
+
+test('a split line received in two deliveries bills the case exactly once', () => {
+  const l = { product_id: 'P163', name_snapshot: 'Biker', qty: 1, cost: 5168, packing_each: 160, split_boxes: 16, taxable: true };
+  const first = buildDeliveredEmail({ num: 'A', total: 0 }, vendors[0], 'SC', 'I', [receivedLine(l, null, 8, 5168)], [], SENDER, '');
+  const second = buildDeliveredEmail({ num: 'A', total: 0 }, vendors[0], 'SC', 'I', [receivedLine(l, null, 8, 5168)], [], SENDER, '');
+  assert.equal(round2(first.amount + second.amount), 5831.88);
+});
+
+test('shortage value counts goods plus packing, and no tax', () => {
+  const missing = [{ qty: 2, name_snapshot: 'Biker', cost: 323, packing_each: 10 }];
+  const e = buildShortageEmail({ num: 'SC-5' }, vendors[0], 'Santa Clara', missing, SENDER);
+  assert.match(e.body, /Missing value:\s+\$666\.00/);
+});
+
+// ---------- variety packs on the order ----------
+
+test('a variety pack carries its colours into the PO line at send time', () => {
+  // Not looked up when something renders it — baked into name_snapshot, the same
+  // way the name is, so the sent order is a record of what was actually asked for.
+  const pack = { id: 'S831', vendor_id: 'md', name: 'Sunsational 4oz — colour pack ($3)',
+    type: 'supply', base_cost: 19.50, cost: 214.50, pack_units: 11, split_boxes: 11,
+    packing_units: 0, taxable: false };
+  const md = { id: 'md', name: 'Marathon', email: 'm@x', tax_rate: 0.0975, packing_fee: 4 };
+  const [d] = buildDrafts({ S831: 2 }, [pack], [md]);
+  const snap = d.lines[0].name_snapshot;
+  assert.match(snap, /^Sunsational 4oz — colour pack \(\$3\)\n/);
+  assert.match(snap, /colours: Red, Green, Orange, Pink, Magenta, Sky Blue, Coral, Lilac, Violet, Yellow and Ruby Red$/);
+  assert.equal(snapshotHead(snap), 'Sunsational 4oz — colour pack ($3)');
+  assert.equal(snapshotRest(snap).length, 1);
+  // exempt supply, no packing, 2 x $214.50
+  assert.equal(d.total, 429);
+});
+
+test('an ordinary game gets no colour line', () => {
+  const p = { id: 'M1', vendor_id: 'md', name: 'Lucky Sevens', type: 'flash', base_cost: 80,
+    cost: 80, pack_units: 1, split_boxes: 1, packing_units: 1, tickets: 1200, price_per_ticket: 1 };
+  const md = { id: 'md', name: 'Marathon', email: 'm@x', tax_rate: 0.0975, packing_fee: 4 };
+  const [d] = buildDrafts({ M1: 5 }, [p], [md]);
+  assert.equal(d.lines[0].name_snapshot, 'Lucky Sevens (1200/$1)');
+  assert.equal(snapshotRest(d.lines[0].name_snapshot).length, 0);
+});
+
+test('the colour line prints under its row without widening the table', () => {
+  const md = { id: 'md', name: 'Marathon', email: 'm@x', contact_name: 'Esteban', tax_rate: 0.0975 };
+  const lines = [{ product_id: 'S831', qty: 2, cost: 214.50, base_cost: 19.50, pack_units: 11,
+    packing_each: 0, taxable: false, kind: 'item',
+    name_snapshot: 'Sunsational 4oz — colour pack ($3)\ncolours: Red, Green and Blue' }];
+  const po = { num: 'X', hall_id: 'sc', vendor_id: 'md', lines, ...poTotals(lines, 0.0975), sent_at: '2026-08-12' };
+  const [e] = buildOrderEmails([po], [md], 'Santa Clara', '1 Main St', SENDER);
+  const rows = e.body.split('\n');
+  const item = rows.find((r) => r.includes('Sunsational'));
+  const colourRow = rows.find((r) => r.trim().startsWith('colours:'));
+  assert.ok(item && colourRow, 'both the row and its colours are printed');
+  assert.ok(rows.indexOf(colourRow) === rows.indexOf(item) + 1, 'colours sit directly under the row');
+  // the Item column is sized on the name, not on the colour list
+  const header = rows.find((r) => r.startsWith('Unit'));
+  assert.ok(header.length < 100, `header should stay narrow, was ${header.length}`);
 });
