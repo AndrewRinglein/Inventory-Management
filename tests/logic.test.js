@@ -11,6 +11,34 @@ import { needsSetup, needsCost, needsType, needsTickets, needsAnyUpdate, needsVe
 import { isGrabBag } from '../src/lib/logic/categories.js';
 import { priceParts, boxCost, baseCost, packUnits, packingFor } from '../src/lib/logic/pricing.js';
 import { receivedLine, missingLine, extraLine, perUnitOf, lineSplit } from '../src/lib/logic/receiving.js';
+import { writeOffCost, wantedFromPlays, consumeOrder } from '../src/lib/logic/session.js';
+import { DemoStore } from '../src/lib/store/demoStore.js';
+
+/**
+ * A hall with one box of Bingo Bandit, none of Cash Cow, one of Ditto Dog, and an
+ * unapplied session to run against it. Built through DemoStore so the test drives
+ * the same applySession the app does — a local re-implementation would let the
+ * real one regress with the suite still green, which is how the last fix slipped.
+ */
+function shortStore() {
+  const s = new DemoStore();
+  s.db = {
+    halls: [{ id: 'sc', name: 'Santa Clara' }],
+    products: [
+      { id: 'G1', name: 'Bingo Bandit', base_cost: 100, pack_units: 1, split_boxes: 1 },
+      { id: 'G2', name: 'Cash Cow', base_cost: 80, pack_units: 1, split_boxes: 1 },
+      { id: 'G3', name: 'Ditto Dog', base_cost: 60, pack_units: 1, split_boxes: 1 },
+    ],
+    boxes: [
+      { id: 'b1', hall_id: 'sc', product_id: 'G1', state: 'in_inventory' },
+      { id: 'b3', hall_id: 'sc', product_id: 'G3', state: 'in_inventory' },
+    ],
+    sessions: [{ id: 's1', hall_id: 'sc', session_date: '2026-08-10', part: '', applied_at: null }],
+    session_plays: [], events: [], settings: {},
+  };
+  s._save = () => {};
+  return s;
+}
 
 // ---------- PO math ----------
 test('poTotals matches spreadsheet math (9.75% tax)', () => {
@@ -1073,4 +1101,74 @@ test('the colour line prints under its row without widening the table', () => {
   // the Item column is sized on the name, not on the colour list
   const header = rows.find((r) => r.startsWith('Unit'));
   assert.ok(header.length < 100, `header should stay narrow, was ${header.length}`);
+});
+
+// ---------------------------------------------------------------- shortfalls
+//
+// The bug these guard: applySession used to invent a box whenever the sheet
+// played more than the shelf held, consume it in the same statement, and carry
+// on. The ledger balanced, so nothing ever looked wrong — 79 boxes at Santa
+// Clara were written off that way before anyone counted.
+
+test('a session that is short refuses, and writes nothing', async () => {
+  const store = shortStore();
+  await assert.rejects(
+    () => store.applySession('s1', [{ product_id: 'G1', qty: 3 }]),
+    (e) => e.code === 'session_short' && /needs 3/.test(e.message));
+  // the crucial part: the shelf is untouched and the session is still open
+  assert.equal(store.db.boxes.filter((b) => b.state === 'in_inventory').length, 2);
+  assert.equal(store.db.boxes.filter((b) => b.unrecorded).length, 0);
+  assert.equal(store.db.sessions[0].applied_at, null);
+});
+
+test('the refusal names every short game and the size of the gap', async () => {
+  const store = shortStore();
+  const e = await store.applySession('s1', [{ product_id: 'G1', qty: 3 }, { product_id: 'G2', qty: 2 }])
+    .then(() => null, (err) => err);
+  assert.ok(e, 'it rejected');
+  assert.equal(e.short.length, 2);
+  assert.deepEqual(e.short.map((s) => s.wanted - s.found).sort(), [2, 2]);
+  assert.match(e.message, /Bingo Bandit/);
+  assert.match(e.message, /Cash Cow/);
+  assert.match(e.message, /none on the shelf/);
+});
+
+test('nothing is consumed when a LATER line is the short one', async () => {
+  // the old loop applied game by game, so a shortfall on the last game left every
+  // earlier game already taken off the shelf and the session still unapplied
+  const store = shortStore();
+  await assert.rejects(() => store.applySession('s1',
+    [{ product_id: 'G3', qty: 1 }, { product_id: 'G1', qty: 3 }]));
+  const g3 = store.db.boxes.find((b) => b.product_id === 'G3');
+  assert.equal(g3.state, 'in_inventory', 'the satisfiable line was not consumed');
+  assert.equal(g3.session_id, undefined);
+});
+
+test('allowShort records the write-off, and says so on the history', async () => {
+  const store = shortStore();
+  const res = await store.applySession('s1', [{ product_id: 'G1', qty: 3 }], { allowShort: true });
+  assert.equal(res.moved, 1);
+  assert.equal(res.invented, 2);
+  const ghosts = store.db.boxes.filter((b) => b.unrecorded);
+  assert.equal(ghosts.length, 2);
+  assert.ok(ghosts.every((b) => b.state === 'sold_out' && b.session_id === 's1'));
+  assert.ok(store.db.events.some((e) => e.kind === 'session.short'),
+    'a write-off gets its own history line, not a subclause of the apply');
+});
+
+test('a session that fits applies with no shortfall event', async () => {
+  const store = shortStore();
+  const res = await store.applySession('s1', [{ product_id: 'G1', qty: 1 }]);
+  assert.equal(res.moved, 1);
+  assert.equal(res.invented, 0);
+  assert.equal(store.db.boxes.filter((b) => b.unrecorded).length, 0);
+  assert.ok(!store.db.events.some((e) => e.kind === 'session.short'));
+});
+
+test('a write-off is valued per box, not per ordered unit', () => {
+  // $512 a case, 8 boxes to the case -> $64 a box. Billing the case against a box
+  // count is the same error that turned a $5,671 receipt into $90,750.
+  assert.equal(writeOffCost({ base_cost: 512, pack_units: 1, split_boxes: 8 }), 64);
+  assert.equal(writeOffCost({ base_cost: 19.5, pack_units: 11, split_boxes: 11 }), 19.5);
+  assert.equal(writeOffCost(undefined), 0);
 });

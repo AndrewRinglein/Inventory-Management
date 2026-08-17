@@ -25,7 +25,9 @@ const KINDS = {
   'po.archive':    { label: 'Order archived', tone: 'b-grey' },
   'po.restore':    { label: 'Order restored', tone: 'b-grey' },
   'delivery.add':  { label: 'Delivery',       tone: 'b-green' },
+  'shipment.receive': { label: 'Order received', tone: 'b-green' },
   'session.apply': { label: 'Session used',   tone: 'b-teal' },
+  'session.short': { label: 'Never received', tone: 'b-orange' },
   'session.undo':  { label: 'Session undone', tone: 'b-orange' },
   'email.send':    { label: 'Email sent',     tone: 'b-teal' },
   'eom':           { label: 'End of month',   tone: 'b-green' },
@@ -36,7 +38,8 @@ const kindOf = (k) => KINDS[k] || { label: k, tone: 'b-grey' };
 const GROUPS = [
   { id: 'all',        label: 'Everything', match: () => true },
   { id: 'adjust',     label: 'Adjustments', match: (e) => e.kind === 'adjust' },
-  { id: 'stock',      label: 'Stock in',    match: (e) => e.kind === 'delivery.add' },
+  { id: 'stock',      label: 'Stock in',    match: (e) => e.kind === 'delivery.add' || e.kind === 'shipment.receive' },
+  { id: 'received',   label: 'Received',    match: (e) => e.kind === 'shipment.receive' },
   { id: 'orders',     label: 'Orders',      match: (e) => e.kind.startsWith('po.') || e.kind === 'email.send' },
   { id: 'sessions',   label: 'Sessions',    match: (e) => e.kind.startsWith('session.') },
 ];
@@ -59,6 +62,23 @@ export default function History() {
   const [reason, setReason] = useState('');
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
+  // shipment id -> lines, fetched only when a receipt is opened. A confirmed
+  // order can bring three hundred boxes; loading every one of them to draw a
+  // feed nobody has expanded is the reason this is lazy.
+  const [open, setOpen] = useState({});
+  const [detail, setDetail] = useState({});
+
+  const toggleReceipt = async (id) => {
+    setOpen((o) => ({ ...o, [id]: !o[id] }));
+    if (detail[id] || !store.getReceiptDetail) return;
+    setDetail((d) => ({ ...d, [id]: 'loading' }));
+    try {
+      const lines = await store.getReceiptDetail(id);
+      setDetail((d) => ({ ...d, [id]: lines }));
+    } catch {
+      setDetail((d) => ({ ...d, [id]: [] }));
+    }
+  };
 
   useEffect(() => {
     let live = true;
@@ -187,7 +207,49 @@ export default function History() {
                     <span style={{ fontSize: 13, fontWeight: 600 }}>
                       {e.detail?.label || `${e.entity} ${String(e.entity_id).slice(0, 12)}`}
                     </span>
+                    {e.kind === 'shipment.receive' && (
+                      <button className="btn sm ghost" style={{ padding: '1px 8px', fontSize: 11.5 }}
+                        onClick={() => toggleReceipt(e.entity_id)}>
+                        {open[e.entity_id] ? 'Hide what arrived' : 'See what arrived'}
+                      </button>
+                    )}
                   </div>
+                  {e.kind === 'shipment.receive' && open[e.entity_id] && (
+                    <div style={{ marginTop: 6, paddingLeft: 52 }}>
+                      {detail[e.entity_id] === 'loading' && <span className="dimmer" style={{ fontSize: 12 }}>loading…</span>}
+                      {Array.isArray(detail[e.entity_id]) && detail[e.entity_id].length === 0 && (
+                        <span className="dimmer" style={{ fontSize: 12 }}>
+                          No boxes are recorded against this receipt.
+                        </span>
+                      )}
+                      {Array.isArray(detail[e.entity_id]) && detail[e.entity_id].length > 0 && (
+                        <table className="tbl" style={{ maxWidth: 620 }}><tbody>
+                          {detail[e.entity_id].map((l) => (
+                            <tr key={l.product_id}>
+                              <td className="first">{l.name}</td>
+                              <td className="r mono">{l.boxes} box{l.boxes === 1 ? '' : 'es'}</td>
+                              <td className="r mono">{fmtMoney(l.value)}</td>
+                              <td className="r last dimmer" style={{ fontSize: 11.5 }}>
+                                {/* where those boxes are now — a receipt whose stock is
+                                    already played reads very differently from one sitting
+                                    untouched on the shelf */}
+                                {Object.entries(l.states).map(([s, n]) => `${n} ${s.replace('_', ' ')}`).join(', ')}
+                              </td>
+                            </tr>
+                          ))}
+                          <tr>
+                            <td className="first" style={{ fontWeight: 700 }}>Total</td>
+                            <td className="r mono" style={{ fontWeight: 700 }}>
+                              {detail[e.entity_id].reduce((a, l) => a + l.boxes, 0)} boxes
+                            </td>
+                            <td className="r mono last" style={{ fontWeight: 700 }} colSpan={2}>
+                              {fmtMoney(detail[e.entity_id].reduce((a, l) => a + l.value, 0))}
+                            </td>
+                          </tr>
+                        </tbody></table>
+                      )}
+                    </div>
+                  )}
                   {e.detail?.note && (
                     <div className="dim" style={{ fontSize: 12, marginTop: 3, paddingLeft: 52 }}>
                       &ldquo;{e.detail.note}&rdquo;

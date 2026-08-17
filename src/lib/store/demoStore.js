@@ -4,6 +4,7 @@
 import { CATALOG } from '../../data/catalog.js';
 import { perBoxValue } from '../logic/pricing.js';
 import { transition } from '../logic/boxes.js';
+import { wantedFromPlays, consumeOrder, writeOffCost, ShortfallError } from '../logic/session.js';
 
 const uid = () => 'id_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
@@ -298,7 +299,7 @@ export class DemoStore {
   async getSessionPlays(sessionId) { return (this.db.session_plays || []).filter((p) => p.session_id === sessionId); }
   async getAllSessionPlays() { return [...(this.db.session_plays || [])]; }
 
-  async applySession(sessionId, plays) {
+  async applySession(sessionId, plays, opts = {}) {
     const sess = (this.db.sessions || []).find((x) => x.id === sessionId);
     if (!sess) throw new Error('Session not found');
     if (sess.applied_at) throw new Error('That session has already been taken out of stock.');
@@ -312,18 +313,29 @@ export class DemoStore {
       throw new Error('This session was partly applied before and stopped midway. '
         + 'Undo it first, then apply it again — otherwise the stock gets taken off twice.');
     }
-    const want = {};
-    for (const p of plays) if (p.product_id) want[p.product_id] = (want[p.product_id] || 0) + p.qty;
-    const short = []; let moved = 0, invented = 0;
+    const want = wantedFromPlays(plays);
     const tag = `${sess.session_date}${sess.part ? ' ' + sess.part : ''}`;
     const now = new Date().toISOString();
+    // count first, move second — mirrors supabaseStore, so a session that is short
+    // on its last game does not consume every earlier game before finding out
+    const pools = {}; const short = [];
     for (const [pid, n] of Object.entries(want)) {
       // opened-on-the-floor boxes are the ones the sheet means; take them first
       const avail = this.db.boxes.filter((b) => b.hall_id === sess.hall_id
         && b.product_id === pid && !b.session_id
         && (b.state === 'opened' || b.state === 'in_inventory'));
-      const pool = [...avail.filter((b) => b.state === 'opened'),
-                    ...avail.filter((b) => b.state === 'in_inventory')].slice(0, n);
+      pools[pid] = consumeOrder(avail, n);
+      if (pools[pid].length < n) {
+        short.push({ product_id: pid, wanted: n, found: pools[pid].length, invented: n - pools[pid].length });
+      }
+    }
+    if (short.length && !opts.allowShort) {
+      throw new ShortfallError(short, Object.fromEntries(
+        (this.db.products || []).map((p) => [p.id, p.name])));
+    }
+    let moved = 0, invented = 0;
+    for (const [pid, n] of Object.entries(want)) {
+      const pool = pools[pid];
       for (const b of pool) {
         b.state = 'sold_out'; b.session_id = sessionId;
         b.opened_session = b.opened_session || tag;
@@ -332,10 +344,7 @@ export class DemoStore {
       }
       const gap = n - pool.length;
       if (gap > 0) {
-        short.push({ product_id: pid, wanted: n, found: pool.length, invented: gap });
-        const p = this.db.products.find((x) => x.id === pid) || {};
-        const each = Math.round(((Number(p.base_cost) || 0) * Math.max(1, p.pack_units || 1)
-          / Math.max(1, p.split_boxes || 1)) * 100) / 100;
+        const each = writeOffCost(this.db.products.find((x) => x.id === pid));
         for (let i = 0; i < gap; i++) {
           this.db.boxes.push({
             id: uid(), hall_id: sess.hall_id, product_id: pid, state: 'sold_out',
@@ -348,6 +357,7 @@ export class DemoStore {
     }
     sess.applied_at = now;
     this._event('session.apply', 'sessions', sessionId, { moved, invented, short: short.length });
+    if (invented > 0) this._event('session.short', 'sessions', sessionId, { invented, games: short });
     this._save();
     return { session: sess, moved, invented, short };
   }
@@ -485,9 +495,37 @@ export class DemoStore {
     const row = { id: uid(), confirmed: false, received_at: new Date().toISOString(), ...s };
     this.db.shipments.push(row); this._save(); return row;
   }
-  async confirmShipment(id) {
+  async confirmShipment(id, summary = {}) {
     const s = this.db.shipments.find((x) => x.id === id);
-    s.confirmed = true; this._save(); return s;
+    s.confirmed = true;
+    const po = this.db.purchase_orders.find((p) => p.id === s.po_id);
+    this._event('shipment.receive', 'shipments', id, {
+      label: `${po?.num || 'delivery'} received`
+        + (summary.invoice_no ? ` — invoice ${summary.invoice_no}` : '')
+        + (summary.boxes != null ? ` — ${summary.boxes} box(es)` : '')
+        + (summary.missing ? `, ${summary.missing} short` : ''),
+      po_id: s.po_id, po_num: po?.num, hall: po?.hall_id, vendor_id: po?.vendor_id,
+      invoice_no: summary.invoice_no || null, boxes: summary.boxes ?? null,
+      missing: summary.missing || 0, amount: summary.amount ?? null,
+    });
+    this._save(); return s;
+  }
+  /** mirror of supabaseStore.getReceiptDetail — read the boxes, not a snapshot */
+  async getReceiptDetail(shipmentId) {
+    const rows = (this.db.boxes || []).filter((b) => b.shipment_id === shipmentId);
+    const byProduct = {};
+    for (const b of rows) {
+      const p = (this.db.products || []).find((x) => x.id === b.product_id);
+      const g = (byProduct[b.product_id] ||= {
+        product_id: b.product_id, name: p?.name || b.product_id,
+        boxes: 0, value: 0, serials: [], states: {},
+      });
+      g.boxes += 1;
+      g.value = Math.round((g.value + (Number(b.cost) || 0)) * 100) / 100;
+      if (b.serial) g.serials.push(b.serial);
+      g.states[b.state] = (g.states[b.state] || 0) + 1;
+    }
+    return Object.values(byProduct).sort((a, b) => a.name.localeCompare(b.name));
   }
   async getShipments(hallId) {
     const poIds = new Set(this.db.purchase_orders.filter((p) => p.hall_id === hallId).map((p) => p.id));

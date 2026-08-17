@@ -79,19 +79,29 @@ export default function SessionUse() {
     return { rows, onsite, presale, total: onsite + presale, unmatched, short, shortTitles };
   };
 
-  const doApply = async (s) => {
+  /**
+   * `allowShort` is only ever true on a second pass, after the store has refused
+   * once and the person has read which games are short and said go anyway. The
+   * first call never writes anything off — that was the whole bug.
+   */
+  const doApply = async (s, allowShort = false) => {
     if (busy) return;
     if (!(await requirePin())) return;
     setBusy(true);
     try {
-      const res = await store.applySession(s.id, byS[s.id] || []);
+      const res = await store.applySession(s.id, byS[s.id] || [], { allowShort });
       await Promise.all([load(), reloadHall()]);
       setConfirm(null);
       setToast(res.invented
         ? `${res.moved + res.invented} box(es) recorded as played — ${res.invented} of them were never received into stock`
         : `${res.moved} box(es) removed from stock`, null, 8000);
     } catch (e) {
-      setToast(e.message || 'Could not apply that session', null, 8000);
+      if (e?.code === 'session_short') {
+        // nothing was written; ask, then re-run with the shortfall accepted
+        setConfirm({ kind: 'short', session: s, message: e.message, short: e.short });
+      } else {
+        setToast(e.message || 'Could not apply that session', null, 8000);
+      }
     } finally { setBusy(false); }
   };
 
@@ -358,8 +368,36 @@ export default function SessionUse() {
         );
       })()}
 
+      {/* ---- the store refused: short on stock, nothing written ---- */}
+      {confirm?.kind === 'short' && (
+        <div className="modal-bg" onClick={() => !busy && setConfirm(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 560 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6 }}>
+              {sessionLabel(confirm.session)} plays boxes the hall doesn't have
+            </div>
+            <p style={{ fontSize: 13, whiteSpace: 'pre-wrap', margin: 0 }}>{confirm.message}</p>
+            <p style={{ fontSize: 12.5, background: '#fdf8ee', border: '1px solid #e2c39a',
+                        borderRadius: 6, padding: '10px 12px', marginTop: 12 }}>
+              Applying anyway records the difference as boxes that were never received into
+              stock. That keeps the ledger honest, but it is a write-off — it will show on the
+              history as one, and someone still has to find out where those boxes came from.
+            </p>
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <button className="btn ghost" disabled={busy}
+                      onClick={() => { const s = confirm.session; setConfirm(null); doApply(s, true); }}>
+                {busy ? 'Working…' : 'Apply anyway and record the write-off'}
+              </button>
+              <div style={{ flex: 1 }} />
+              <button className="btn primary" disabled={busy} onClick={() => setConfirm(null)}>
+                Stop — I'll fix the stock
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ---- confirm ---- */}
-      {confirm && (() => {
+      {confirm && !confirm.kind && (() => {
         const st = stats(confirm);
         return (
           <div className="modal-bg" onClick={() => !busy && setConfirm(null)}>
@@ -375,10 +413,8 @@ export default function SessionUse() {
               {st.short > 0 && (
                 <p style={{ fontSize: 12.5, background: '#fdf8ee', border: '1px solid #e2c39a', borderRadius: 6, padding: '10px 12px' }}>
                   <b>{st.short} box{st.short === 1 ? '' : 'es'} across {st.shortTitles} game{st.shortTitles === 1 ? '' : 's'} aren't
-                  on the shelf.</b> They'll still be recorded as played, marked as never received into
-                  stock — the sheet says they went out, so the honest record is that they did and the
-                  delivery is what's missing. They show up as a shortfall you can chase, and Undo removes
-                  them cleanly.
+                  on the shelf.</b> This will stop rather than take anything off, and show you which
+                  games are short. Nothing gets written until you say so on the next screen.
                 </p>
               )}
               {st.unmatched > 0 && (

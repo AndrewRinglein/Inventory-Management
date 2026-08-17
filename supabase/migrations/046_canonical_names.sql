@@ -1,6 +1,6 @@
 -- Canonical game names, and two merges.
 --
--- DRAFT — not applied.
+-- APPLIED 2026-08-17 via execute_sql.
 --
 -- NAMING RULE: every word of a game name starts with a capital. Tokens containing
 -- a digit are left exactly as they are, because those are sizes and vendor SKUs —

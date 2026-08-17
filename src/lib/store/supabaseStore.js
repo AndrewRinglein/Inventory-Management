@@ -4,6 +4,8 @@
 import { createClient } from '@supabase/supabase-js';
 import { senderFor } from '../logic/emails.js';
 import { perBoxValue } from '../logic/pricing.js';
+import { round2 } from '../logic/po.js';
+import { wantedFromPlays, consumeOrder, writeOffCost, ShortfallError } from '../logic/session.js';
 
 const ok = ({ data, error }) => { if (error) throw new Error(error.message); return data; };
 
@@ -356,11 +358,13 @@ export class SupabaseStore {
    * Each box is stamped with the session, which is what makes undo exact rather
    * than a guess at which boxes to put back.
    *
-   * Short lines are reported, not fudged: if the shelf holds four and the sheet
-   * says eight, four move and the other four come back as a shortfall for someone
-   * to explain. Never invents a box that was never counted in.
+   * Short lines STOP the run. If the shelf holds four and the sheet says eight,
+   * nothing moves and the caller is told which games are short and by how much.
+   * Writing the difference off as never-received boxes is still possible, but
+   * only when the caller passes { allowShort: true } — a deliberate answer to a
+   * question, rather than something that happens silently on the way past.
    */
-  async applySession(sessionId, plays) {
+  async applySession(sessionId, plays, opts = {}) {
     const sess = ok(await this.sb.from('sessions').select('*').eq('id', sessionId).single());
     if (sess.applied_at) throw new Error('That session has already been taken out of stock.');
     // Historical programmes describe play from before the system held inventory.
@@ -380,17 +384,17 @@ export class SupabaseStore {
       throw new Error('This session was partly applied before and stopped midway. '
         + 'Undo it first, then apply it again — otherwise the stock gets taken off twice.');
     }
-    const want = {};
-    for (const p of plays) {
-      if (!p.product_id) continue;
-      want[p.product_id] = (want[p.product_id] || 0) + p.qty;
-    }
+    const want = wantedFromPlays(plays);
     const prods = Object.fromEntries(
       (ok(await this.sb.from('products').select('*').in('id', Object.keys(want).length ? Object.keys(want) : ['-'])))
         .map((p) => [p.id, p]));
 
+    // COUNT FIRST, MOVE SECOND. The old loop consumed each game as it went and
+    // only discovered a shortfall when it reached one, so a session that was
+    // short on its last game had already taken every earlier game off the shelf.
+    // Nothing is written until every line is known to be satisfiable.
+    const pools = {};
     const short = [];
-    let moved = 0, invented = 0;
     for (const [pid, n] of Object.entries(want)) {
       // Boxes opened on the floor during play are exactly the ones the count sheet
       // is reporting, so take those FIRST. Looking only at in_inventory destroyed
@@ -403,10 +407,19 @@ export class SupabaseStore {
         .order('state', { ascending: true })            // 'in_inventory' < 'opened' alphabetically…
         .order('received_at', { nullsFirst: true })
         .limit(n * 2));
-      const ordered = [
-        ...pool.filter((b) => b.state === 'opened'),    // …so re-order explicitly: opened first
-        ...pool.filter((b) => b.state === 'in_inventory'),
-      ].slice(0, n);
+      pools[pid] = consumeOrder(pool, n);               // …so re-order explicitly: opened first
+      if (pools[pid].length < n) {
+        short.push({ product_id: pid, wanted: n, found: pools[pid].length, invented: n - pools[pid].length });
+      }
+    }
+    if (short.length && !opts.allowShort) {
+      throw new ShortfallError(short,
+        Object.fromEntries(Object.values(prods).map((p) => [p.id, p.name])));
+    }
+
+    let moved = 0, invented = 0;
+    for (const [pid, n] of Object.entries(want)) {
+      const ordered = pools[pid];
       for (const b of ordered) {
         if (b.state === 'in_inventory') {
           ok(await this.sb.from('boxes').update({ state: 'opened', session_id: sessionId,
@@ -417,15 +430,12 @@ export class SupabaseStore {
         ok(await this.sb.from('boxes').update({ state: 'sold_out' }).eq('id', b.id));
         moved++;
       }
-      // The sheet says more were played than the shelf held. Record them anyway,
-      // marked as never-received, so the session tells the truth and the gap is
-      // countable instead of quietly dropped.
+      // The caller has accepted the shortfall. Record the difference as
+      // never-received boxes so the ledger still balances and the gap stays
+      // countable — but it is now an accepted write-off, not a silent one.
       const gap = n - ordered.length;
       if (gap > 0) {
-        short.push({ product_id: pid, wanted: n, found: pool.length, invented: gap });
-        const p = prods[pid] || {};
-        const each = Math.round(((Number(p.base_cost) || 0) * Math.max(1, p.pack_units || 1)
-          / Math.max(1, p.split_boxes || 1)) * 100) / 100;
+        const each = writeOffCost(prods[pid]);
         const now = new Date().toISOString();
         ok(await this.sb.from('boxes').insert(Array.from({ length: gap }, () => ({
           hall_id: sess.hall_id, product_id: pid, state: 'sold_out', unrecorded: true,
@@ -444,6 +454,18 @@ export class SupabaseStore {
              (invented ? `, ${invented} of them never received into stock` : ''),
       moved, invented, short: short.length, hall: sess.hall_id,
     });
+    // A write-off gets its own line on the history. The apply event alone buried
+    // it in a subclause nobody reads, which is how 79 boxes went unnoticed.
+    if (invented > 0) {
+      await this.logEvent('session.short', 'sessions', sessionId, {
+        label: `${sess.hall_id === 'sc' ? 'Santa Clara' : 'Redwood City'} — ${sess.session_date}`
+             + `${sess.part ? ' ' + sess.part : ''}: ${invented} box(es) played that were never `
+             + `received into stock (${short.map((s) => (prods[s.product_id]?.name || s.product_id)
+                 + ' ×' + s.invented).join(', ')})`,
+        invented, hall: sess.hall_id,
+        games: short.map((s) => ({ ...s, name: prods[s.product_id]?.name || s.product_id })),
+      });
+    }
     return { session: applied, moved, invented, short };
   }
 
@@ -627,7 +649,60 @@ export class SupabaseStore {
 
   // ---- receiving ----
   async createShipment(s) { return ok(await this.sb.from('shipments').insert(s).select().single()); }
-  async confirmShipment(id) { return ok(await this.sb.from('shipments').update({ confirmed: true }).eq('id', id).select().single()); }
+  /**
+   * Mark a shipment received, and put it on the history.
+   *
+   * Receiving used to write boxes and nothing else, so a confirmed delivery left
+   * no trace on the history at all — the only way to see what had actually turned
+   * up against an order was to query the boxes table. `summary` is the human part
+   * (which PO, which invoice, how many short); the line detail is never snapshotted
+   * here because the boxes themselves are the record — see getReceiptDetail.
+   */
+  async confirmShipment(id, summary = {}) {
+    const row = ok(await this.sb.from('shipments').update({ confirmed: true }).eq('id', id).select().single());
+    const po = row.po_id
+      ? ok(await this.sb.from('purchase_orders').select('num,hall_id,vendor_id').eq('id', row.po_id).single())
+      : null;
+    await this.logEvent('shipment.receive', 'shipments', id, {
+      label: `${po?.num || 'delivery'} received`
+        + (summary.invoice_no ? ` — invoice ${summary.invoice_no}` : '')
+        + (summary.boxes != null ? ` — ${summary.boxes} box(es)` : '')
+        + (summary.missing ? `, ${summary.missing} short` : ''),
+      po_id: row.po_id, po_num: po?.num, hall: po?.hall_id, vendor_id: po?.vendor_id,
+      invoice_no: summary.invoice_no || null, boxes: summary.boxes ?? null,
+      missing: summary.missing || 0, amount: summary.amount ?? null,
+    });
+    return row;
+  }
+
+  /**
+   * What actually arrived on one shipment, by game.
+   *
+   * Read from the boxes, not from a snapshot taken at confirm time. A box can be
+   * adjusted, marked missing or swapped afterwards, and the question "what did
+   * this delivery bring us" should answer with the boxes that exist, including
+   * anything that turned up which was never on the order.
+   */
+  async getReceiptDetail(shipmentId) {
+    const rows = await fetchAll(() => this.sb.from('boxes')
+      .select('id,product_id,cost,state,serial,po_id').eq('shipment_id', shipmentId));
+    if (!rows.length) return [];
+    const ids = [...new Set(rows.map((b) => b.product_id).filter(Boolean))];
+    const prods = Object.fromEntries((ok(await this.sb.from('products').select('id,name').in('id', ids)))
+      .map((p) => [p.id, p.name]));
+    const byProduct = {};
+    for (const b of rows) {
+      const g = (byProduct[b.product_id] ||= {
+        product_id: b.product_id, name: prods[b.product_id] || b.product_id,
+        boxes: 0, value: 0, serials: [], states: {},
+      });
+      g.boxes += 1;
+      g.value = round2(g.value + (Number(b.cost) || 0));
+      if (b.serial) g.serials.push(b.serial);
+      g.states[b.state] = (g.states[b.state] || 0) + 1;
+    }
+    return Object.values(byProduct).sort((a, b) => a.name.localeCompare(b.name));
+  }
   async getShipments(hallId) {
     return ok(await this.sb.from('shipments').select('*, purchase_orders!inner(hall_id)').eq('purchase_orders.hall_id', hallId));
   }
