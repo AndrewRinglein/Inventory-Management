@@ -9,8 +9,10 @@
 //              setPoStatus(poId, status)
 //   boxes:     getBoxes(hallId), updateBox(id, fields), transitionBox(id, toState),
 //              createBoxes(list), setBoxSession(ids, tag)
-//   receiving: createShipment(s), confirmShipment(shipmentId), uploadInvoicePhoto(file) -> path,
-//              getShipments(hallId)
+//   receiving: createShipment(s), confirmShipment(shipmentId, summary), getReceiptDetail(shipmentId),
+//              uploadInvoicePhoto(file) -> path, getShipments(hallId)
+//   location:  moveBoxes({hallId, productId, from, to, qty, ref}), getOffsite(hallId),
+//              confirmOffsite(ids, on)   -- where stock IS, independent of its state
 //   payments:  getPayments(hallId), addPayment(p), setPaymentStatus(id, status)
 //   emails:    sendEmails(list) -> logs (routes via edge function in prod, log-only in demo),
 //              getEmails(hallId)

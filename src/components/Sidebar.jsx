@@ -38,6 +38,8 @@ export default function Sidebar() {
       <Item id="sessionuse" label="Session Use" title="What each session played, and taking it out of stock" />
       <Item id="openboxes" label="Open Boxes" />
       <Item id="inventory" label="Inventory" />
+      <Item id="offsite" label="Off-site Stock"
+        title="Stock we own that isn't on the floor — held by a distributor or in storage. Counts toward value, never toward what can be played." />
       <Item id="orders" label="Open Orders" badge={openPos || null} />
       <Item id="accounting" label="Accounting" badge={openPay || null} />
       <Item id="intake" label="Receiving" />

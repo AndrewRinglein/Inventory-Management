@@ -2,6 +2,7 @@ import React, { useContext, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
 import { fmtMoney, buildDrafts, ticketPrice } from '../lib/logic/po.js';
 import { countByProduct } from '../lib/logic/boxes.js';
+import { locationShort, shortageAdvice } from '../lib/logic/location.js';
 import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.js';
 import { needsCost, needsType, needsTickets, needsVendor } from '../lib/logic/setup.js';
 import { priceParts, baseCost, packUnits } from '../lib/logic/pricing.js';
@@ -39,6 +40,7 @@ const sortVal = (p, k, cnt) => {
     case 'packing': return Number(p.packing_units) || 0;
     case 'cost': return Number(p.cost) || 0;
     case 'live': return (c.inv || 0) + (c.open || 0);
+    case 'off': return c.off || 0;
     case 'onorder': return c.onorder || 0;
     default: return p.name.toLowerCase();
   }
@@ -162,6 +164,34 @@ export default function Purchase() {
         {anyFilter && <button className="btn ghost sm" onClick={clearFilters}>Clear</button>}
       </div>
 
+      {/* Ship before you buy. The order builder's job is to tell you what you
+          NEED; if you already own it somewhere else the answer is a shipment,
+          not a purchase order, and nothing else in the app will say so. */}
+      {(() => {
+        const owned = Object.entries(orderQty)
+          .filter(([pid, n]) => n > 0 && (cnt[pid]?.off || 0) > 0)
+          .map(([pid, n]) => {
+            const p = products.find((x) => x.id === pid);
+            const c = cnt[pid] || {};
+            return { pid, name: p?.name || pid, want: n, off: c.off || 0, offBy: c.offBy || {} };
+          });
+        if (!owned.length) return null;
+        return (
+          <div className="card pad" style={{ marginBottom: 12, background: '#eef7f6', border: '1px solid #9ec9c4' }}>
+            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>
+              You already own {owned.reduce((a, o) => a + Math.min(o.want, o.off), 0)} box(es) of what you're ordering
+            </div>
+            {owned.map((o) => (
+              <div key={o.pid} style={{ fontSize: 12.5, marginTop: 2 }}>
+                <b>{o.name}</b> — ordering {o.want}, and {o.off} already ours
+                ({Object.entries(o.offBy).map(([k, v]) => `${v} ${locationShort(k)}`).join(', ')}).
+                {' '}{shortageAdvice(o.want, o.off)}
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+
       <div className="card" style={{ overflow: 'hidden' }}>
         <table className="tbl">
           <thead><tr>
@@ -174,7 +204,10 @@ export default function Purchase() {
             <th className="r sortable" style={{ width: 62 }} onClick={() => sortBy('units')} title="Deals inside one ordered unit — what the base price is quoted against">Deals{arrow('units')}</th>
             <th className="r sortable" style={{ width: 86 }} onClick={() => sortBy('packing')} title="Packing on one ordered unit">Packing{arrow('packing')}</th>
             <th className="r sortable" style={{ width: 106 }} onClick={() => sortBy('cost')} title="Base × deals + packing">Unit total{arrow('cost')}</th>
-            <th className="r sortable" style={{ width: 66 }} onClick={() => sortBy('live')}>Live{arrow('live')}</th>
+            <th className="r sortable" style={{ width: 66 }} onClick={() => sortBy('live')}
+                title="On the floor at this hall — what can actually be played">Live{arrow('live')}</th>
+            <th className="r sortable" style={{ width: 76 }} onClick={() => sortBy('off')}
+                title="Already ours, but held by a distributor or sat in storage. Ship it rather than buying more.">Off-site{arrow('off')}</th>
             <th className="r sortable" style={{ width: 78 }} onClick={() => sortBy('onorder')}>On order{arrow('onorder')}</th>
             <th style={{ textAlign: 'center', width: 96 }}>Units</th>
             <th className="r last" style={{ width: 118 }}>Line total</th>
@@ -206,6 +239,15 @@ export default function Purchase() {
                     {pp.splits && <div className="dimmer" style={{ fontSize: 10.5 }}>→ {pp.split} boxes @ {fmtMoney(pp.perBox)}</div>}
                   </td>
                   <td className="r mono">{(c.inv || 0) + (c.open || 0)}</td>
+                  {/* The whole point of the location column: you should never be
+                      typing a quantity into a game you already own elsewhere
+                      without being told so. */}
+                  <td className="r mono" title={(c.off || 0)
+                        ? `${Object.entries(c.offBy || {}).map(([k, v]) => `${v} ${locationShort(k)}`).join(', ')} — ship this before buying more`
+                        : ''}
+                      style={{ color: (c.off || 0) ? 'var(--teal)' : 'inherit', fontWeight: (c.off || 0) ? 700 : 400 }}>
+                    {(c.off || 0) || <span className="dimmer">—</span>}
+                  </td>
                   <td className="r mono dimmer">{c.onorder || 0}</td>
                   <td style={{ textAlign: 'center' }}>
                     {needsVendor(p)

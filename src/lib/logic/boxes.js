@@ -25,13 +25,44 @@ export function transition(box, to, now = new Date().toISOString()) {
   return b;
 }
 
-/** Per-product counts for a hall's boxes: {pid: {inv, open, onorder, sold, missing}} */
+/**
+ * Per-product counts for a hall's boxes.
+ *
+ * `inv` MEANS ON THE FLOOR. That is deliberate and it is the safe default: every
+ * caller of this function — the order builder, session apply, the assign screen —
+ * is asking an operational question, and answering it with stock sitting in a
+ * distributor's warehouse would be wrong in the dangerous direction. Off-site is
+ * reported alongside, never folded in.
+ *
+ *   inv      in_inventory, on the floor        what can be played tonight
+ *   open     opened, on the floor              part-used, still selling
+ *   off      in_inventory or opened, off-site  ours, elsewhere, not playable
+ *   owned    inv + open + off                  what accounting counts as stock
+ *
+ * `offBy` breaks the off-site figure down by location so a screen can say WHERE
+ * without a second pass over the boxes.
+ */
 export function countByProduct(boxes) {
   const out = {};
   for (const b of boxes) {
-    const c = (out[b.product_id] ||= { inv: 0, open: 0, onorder: 0, sold: 0, missing: 0 });
-    if (b.state === 'in_inventory') c.inv++;
-    else if (b.state === 'opened') c.open++;
+    const c = (out[b.product_id] ||= {
+      inv: 0, open: 0, onorder: 0, sold: 0, missing: 0, off: 0, owned: 0, offBy: {},
+    });
+    const where = b.location || 'hall';       // every row predates the column
+    const held = b.state === 'in_inventory' || b.state === 'opened';
+    if (where !== 'hall') {
+      if (held) {
+        c.off++; c.owned++;
+        c.offBy[where] = (c.offBy[where] || 0) + 1;
+      }
+      // an off-site box is never floor stock, whatever its state
+      if (b.state === 'on_order') c.onorder++;
+      else if (b.state === 'sold_out') c.sold++;
+      else if (b.state === 'missing') c.missing++;
+      continue;
+    }
+    if (b.state === 'in_inventory') { c.inv++; c.owned++; }
+    else if (b.state === 'opened') { c.open++; c.owned++; }
     else if (b.state === 'on_order') c.onorder++;
     else if (b.state === 'sold_out') c.sold++;
     else if (b.state === 'missing') c.missing++;

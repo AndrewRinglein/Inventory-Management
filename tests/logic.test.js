@@ -12,6 +12,7 @@ import { isGrabBag } from '../src/lib/logic/categories.js';
 import { priceParts, boxCost, baseCost, packUnits, packingFor } from '../src/lib/logic/pricing.js';
 import { receivedLine, missingLine, extraLine, perUnitOf, lineSplit } from '../src/lib/logic/receiving.js';
 import { writeOffCost, wantedFromPlays, consumeOrder } from '../src/lib/logic/session.js';
+import { coverShortage, shortageAdvice, isPlayable, isOwned } from '../src/lib/logic/location.js';
 import { DemoStore } from '../src/lib/store/demoStore.js';
 
 /**
@@ -187,8 +188,79 @@ test('countByProduct tallies states', () => {
     { product_id: 'P1', state: 'on_order' },
     { product_id: 'P2', state: 'sold_out' },
   ]);
-  assert.deepEqual(c.P1, { inv: 2, open: 1, onorder: 1, sold: 0, missing: 0 });
+  assert.deepEqual(c.P1, { inv: 2, open: 1, onorder: 1, sold: 0, missing: 0,
+    off: 0, owned: 3, offBy: {} });
   assert.equal(c.P2.sold, 1);
+});
+
+// ---------- where stock is, as opposed to what state it is in ----------
+//
+// Two numbers, not one: what accounting owns and what operations can play. They
+// only ever differ off-site, which is why one number worked until it didn't.
+
+test('off-site stock is owned but never counted as floor stock', () => {
+  const c = countByProduct([
+    { product_id: 'P1', state: 'in_inventory' },
+    { product_id: 'P1', state: 'in_inventory', location: 'vendor' },
+    { product_id: 'P1', state: 'in_inventory', location: 'storage' },
+    { product_id: 'P1', state: 'opened' },
+  ]).P1;
+  assert.equal(c.inv, 1, 'floor stock only');
+  assert.equal(c.open, 1);
+  assert.equal(c.off, 2, 'both off-site boxes');
+  assert.equal(c.owned, 4, 'accounting sees all four');
+  assert.deepEqual(c.offBy, { vendor: 1, storage: 1 });
+});
+
+test('a box with no location is on the floor', () => {
+  // every row predates the column; none of them may silently become off-site
+  const c = countByProduct([{ product_id: 'P1', state: 'in_inventory' }]).P1;
+  assert.equal(c.inv, 1);
+  assert.equal(c.off, 0);
+});
+
+test('a shortage covered by off-site stock is a shipment, not a purchase', () => {
+  assert.deepEqual(coverShortage(4, 6), { ship: 4, buy: 0, short: 4, action: 'ship' });
+  assert.deepEqual(coverShortage(4, 0), { ship: 0, buy: 4, short: 4, action: 'buy' });
+  assert.deepEqual(coverShortage(4, 1), { ship: 1, buy: 3, short: 4, action: 'both' });
+  assert.equal(coverShortage(0, 5).action, 'none');
+  assert.match(shortageAdvice(4, 6, 'storage'), /Ship, don't buy/);
+  assert.match(shortageAdvice(4, 0), /Buy 4/);
+});
+
+test('a session cannot play stock that is off-site', async () => {
+  // the dangerous case: the only box we own is at the distributor. Playing it
+  // would drain the off-site count and hide a real shortage on the floor.
+  const store = shortStore();
+  store.db.boxes = [{ id: 'v1', hall_id: 'sc', product_id: 'G1',
+                      state: 'in_inventory', location: 'vendor' }];
+  await assert.rejects(
+    () => store.applySession('s1', [{ product_id: 'G1', qty: 1 }]),
+    (e) => e.code === 'session_short');
+  assert.equal(store.db.boxes[0].location, 'vendor', 'the off-site box was left alone');
+  assert.equal(store.db.boxes[0].state, 'in_inventory');
+});
+
+test('moving stock changes where it is, not what it is', async () => {
+  const store = shortStore();
+  store.db.boxes = [
+    { id: 'v1', hall_id: 'sc', product_id: 'G1', state: 'in_inventory', location: 'vendor', cost: 100 },
+    { id: 'v2', hall_id: 'sc', product_id: 'G1', state: 'in_inventory', location: 'vendor', cost: 100 },
+  ];
+  const res = await store.moveBoxes({ hallId: 'sc', productId: 'G1', from: 'vendor', to: 'hall', qty: 1 });
+  assert.equal(res.moved, 1);
+  const moved = store.db.boxes.find((b) => b.location === 'hall');
+  assert.equal(moved.state, 'in_inventory', 'still in stock — nothing was received again');
+  assert.ok(moved.counted_at, 'arriving on the floor is a fresh sighting');
+  assert.equal(store.db.boxes.filter((b) => b.location === 'vendor').length, 1);
+});
+
+test('you cannot ship more than is actually there', async () => {
+  const store = shortStore();
+  store.db.boxes = [{ id: 'v1', hall_id: 'sc', product_id: 'G1', state: 'in_inventory', location: 'storage' }];
+  await assert.rejects(
+    () => store.moveBoxes({ hallId: 'sc', productId: 'G1', from: 'storage', to: 'hall', qty: 3 }),
+    /Only 1 box/);
 });
 
 // ---------- scan resolver ----------

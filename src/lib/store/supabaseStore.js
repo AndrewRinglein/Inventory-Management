@@ -403,6 +403,11 @@ export class SupabaseStore {
       const pool = ok(await this.sb.from('boxes').select('id,state')
         .eq('hall_id', sess.hall_id).eq('product_id', pid)
         .in('state', ['opened', 'in_inventory'])
+        // ON THE FLOOR ONLY. A session cannot play a box a distributor is still
+        // holding, and letting it try would turn owned-but-elsewhere stock into
+        // phantom consumption — the shortfall would vanish and the off-site
+        // count would silently drain.
+        .eq('location', 'hall')
         .is('session_id', null)
         .order('state', { ascending: true })            // 'in_inventory' < 'opened' alphabetically…
         .order('received_at', { nullsFirst: true })
@@ -715,6 +720,87 @@ export class SupabaseStore {
   getPhotoUrl(path) {
     const { data } = this.sb.storage.from('invoices').getPublicUrl(path);
     return data.publicUrl;
+  }
+
+  // ---- location: where stock physically is ----
+
+  /**
+   * Move boxes between the floor, a distributor's warehouse and off-site storage.
+   *
+   * A move is NOT a state change — a box in_inventory stays in_inventory whether
+   * it is on the shelf or in a storage unit. Only `location` moves, which is why
+   * the state guard never sees this and cannot object.
+   *
+   * Boxes are chosen oldest-received first, the same order a session consumes
+   * them, so shipping "four Lucky Kat" takes the four that have been sitting
+   * longest rather than an arbitrary four.
+   */
+  async moveBoxes({ hallId, productId, from, to, qty, ref = null, note = '' }) {
+    if (from === to) throw new Error('That stock is already there.');
+    const n = Math.max(0, parseInt(qty) || 0);
+    if (!n) throw new Error('How many boxes?');
+    const pool = ok(await this.sb.from('boxes').select('id')
+      .eq('hall_id', hallId).eq('product_id', productId)
+      .eq('location', from)
+      .in('state', ['in_inventory', 'opened'])
+      .is('session_id', null)
+      .order('received_at', { nullsFirst: true }).order('id')
+      .limit(n));
+    if (pool.length < n) {
+      throw new Error(`Only ${pool.length} box(es) of that are ${from === 'hall' ? 'on the floor' : 'at ' + from}, `
+        + `so ${n} cannot move.`);
+    }
+    const ids = pool.map((b) => b.id);
+    ok(await this.sb.from('boxes').update({
+      location: to, location_ref: to === 'hall' ? null : (ref || null),
+      // arriving on the floor is a fresh physical sighting; leaving it is not
+      counted_at: to === 'hall' ? new Date().toISOString().slice(0, 10) : null,
+    }).in('id', ids));
+    const prod = ok(await this.sb.from('products').select('name').eq('id', productId).single());
+    await this.logEvent('stock.move', 'boxes', ids[0], {
+      label: `${prod?.name || productId} — ${n} box(es) moved ${from} → ${to}`
+           + (ref ? ` (${ref})` : ''),
+      hall: hallId, product_id: productId, from, to, qty: n, ref, note, box_ids: ids,
+    });
+    return { moved: n, ids };
+  }
+
+  /** Everything this hall owns that is not on its floor, newest confirmation first. */
+  async getOffsite(hallId) {
+    const rows = await fetchAll(() => this.sb.from('boxes')
+      .select('id,product_id,cost,state,location,location_ref,counted_at,received_at')
+      .eq('hall_id', hallId).neq('location', 'hall')
+      .in('state', ['in_inventory', 'opened']));
+    if (!rows.length) return [];
+    const ids = [...new Set(rows.map((b) => b.product_id).filter(Boolean))];
+    const prods = Object.fromEntries((ok(await this.sb.from('products').select('id,name').in('id', ids)))
+      .map((p) => [p.id, p.name]));
+    const grouped = {};
+    for (const b of rows) {
+      const key = `${b.product_id}|${b.location}|${b.location_ref || ''}`;
+      const g = (grouped[key] ||= {
+        product_id: b.product_id, name: prods[b.product_id] || b.product_id,
+        location: b.location, location_ref: b.location_ref,
+        boxes: 0, value: 0, counted_at: b.counted_at, ids: [],
+      });
+      g.boxes += 1;
+      g.value = round2(g.value + (Number(b.cost) || 0));
+      g.ids.push(b.id);
+      // the group is only as fresh as its stalest box
+      if (!b.counted_at || (g.counted_at && b.counted_at < g.counted_at)) g.counted_at = b.counted_at;
+    }
+    return Object.values(grouped).sort((a, b) =>
+      a.name.localeCompare(b.name) || a.location.localeCompare(b.location));
+  }
+
+  /** Someone laid eyes on it. Records the date so staleness means something. */
+  async confirmOffsite(ids, on = new Date().toISOString().slice(0, 10)) {
+    if (!ids?.length) return { confirmed: 0 };
+    ok(await this.sb.from('boxes').update({ counted_at: on }).in('id', ids));
+    await this.logEvent('stock.confirm', 'boxes', ids[0], {
+      label: `${ids.length} off-site box(es) confirmed present`, qty: ids.length, on,
+    });
+    return { confirmed: ids.length };
   }
 
   // ---- payments ----

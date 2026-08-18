@@ -323,6 +323,7 @@ export class DemoStore {
       // opened-on-the-floor boxes are the ones the sheet means; take them first
       const avail = this.db.boxes.filter((b) => b.hall_id === sess.hall_id
         && b.product_id === pid && !b.session_id
+        && (b.location || 'hall') === 'hall'          // floor only — mirrors supabaseStore
         && (b.state === 'opened' || b.state === 'in_inventory'));
       pools[pid] = consumeOrder(avail, n);
       if (pools[pid].length < n) {
@@ -542,6 +543,68 @@ export class DemoStore {
     return path;
   }
   getPhotoUrl(path) { return (this.db.photos || {})[path] || null; }
+
+  // ---- location ---- (demo mirror of the Supabase implementation)
+
+  async moveBoxes({ hallId, productId, from, to, qty, ref = null, note = '' }) {
+    if (from === to) throw new Error('That stock is already there.');
+    const n = Math.max(0, parseInt(qty) || 0);
+    if (!n) throw new Error('How many boxes?');
+    const pool = (this.db.boxes || []).filter((b) => b.hall_id === hallId
+      && b.product_id === productId && (b.location || 'hall') === from
+      && !b.session_id && (b.state === 'in_inventory' || b.state === 'opened'))
+      .sort((a, b) => String(a.received_at || '').localeCompare(String(b.received_at || '')))
+      .slice(0, n);
+    if (pool.length < n) {
+      throw new Error(`Only ${pool.length} box(es) of that are ${from === 'hall' ? 'on the floor' : 'at ' + from}, `
+        + `so ${n} cannot move.`);
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    for (const b of pool) {
+      b.location = to;
+      b.location_ref = to === 'hall' ? null : (ref || null);
+      b.counted_at = to === 'hall' ? today : null;
+    }
+    const prod = (this.db.products || []).find((p) => p.id === productId);
+    this._event('stock.move', 'boxes', pool[0].id, {
+      label: `${prod?.name || productId} — ${n} box(es) moved ${from} → ${to}` + (ref ? ` (${ref})` : ''),
+      hall: hallId, product_id: productId, from, to, qty: n, ref, note,
+    });
+    this._save();
+    return { moved: n, ids: pool.map((b) => b.id) };
+  }
+
+  async getOffsite(hallId) {
+    const rows = (this.db.boxes || []).filter((b) => b.hall_id === hallId
+      && (b.location || 'hall') !== 'hall'
+      && (b.state === 'in_inventory' || b.state === 'opened'));
+    const grouped = {};
+    for (const b of rows) {
+      const p = (this.db.products || []).find((x) => x.id === b.product_id);
+      const key = `${b.product_id}|${b.location}|${b.location_ref || ''}`;
+      const g = (grouped[key] ||= {
+        product_id: b.product_id, name: p?.name || b.product_id,
+        location: b.location, location_ref: b.location_ref,
+        boxes: 0, value: 0, counted_at: b.counted_at, ids: [],
+      });
+      g.boxes += 1;
+      g.value = Math.round((g.value + (Number(b.cost) || 0)) * 100) / 100;
+      g.ids.push(b.id);
+      if (!b.counted_at || (g.counted_at && b.counted_at < g.counted_at)) g.counted_at = b.counted_at;
+    }
+    return Object.values(grouped).sort((a, b) =>
+      a.name.localeCompare(b.name) || a.location.localeCompare(b.location));
+  }
+
+  async confirmOffsite(ids, on = new Date().toISOString().slice(0, 10)) {
+    if (!ids?.length) return { confirmed: 0 };
+    for (const b of this.db.boxes) if (ids.includes(b.id)) b.counted_at = on;
+    this._event('stock.confirm', 'boxes', ids[0], {
+      label: `${ids.length} off-site box(es) confirmed present`, qty: ids.length, on,
+    });
+    this._save();
+    return { confirmed: ids.length };
+  }
 
   // ---- payments ----
   async getPayments(hallId) { return this.db.payments.filter((p) => p.hall_id === hallId); }
