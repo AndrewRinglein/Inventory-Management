@@ -3,19 +3,18 @@ import { AppCtx } from '../App.jsx';
 import Adjust from './Adjust.jsx';
 import { fmtMoney, ticketPrice } from '../lib/logic/po.js';
 import { countByProduct } from '../lib/logic/boxes.js';
-import { locationShort } from '../lib/logic/location.js';
 
 import { SESSIONS } from '../lib/sessions.js';
 import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.js';
 import { needsCost, needsType, needsTickets, needsVendor } from '../lib/logic/setup.js';
 import { priceParts, perBoxValue, stockUnit, unitLabel } from '../lib/logic/pricing.js';
 import UpdateGame from './UpdateGame.jsx';
+import { isFloor } from '../lib/logic/location.js';
 
 const COLS = [
   { key: 'vendor', label: 'Vendor' }, { key: 'type', label: 'Type' },
   { key: 'tickets', label: 'Tickets', r: true }, { key: 'price', label: '$ / ticket', r: true },
-  { key: 'cost', label: 'Per unit', r: true }, { key: 'inv', label: 'On floor', r: true },
-  { key: 'off', label: 'Off-site', r: true },
+  { key: 'cost', label: 'Per unit', r: true }, { key: 'inv', label: 'Available', r: true },
   { key: 'unit', label: 'Counted as' },
   { key: 'open', label: 'Opened', r: true }, { key: 'onorder', label: 'On order', r: true },
   { key: 'value', label: 'Value', r: true }, { key: 'assigned', label: 'Set aside' },
@@ -47,35 +46,34 @@ export default function Inventory() {
 
   const rows = useMemo(() => {
     const out = [];
-    let totVal = 0, unvalued = 0, offVal = 0, offBoxes = 0;
+    let totVal = 0, unvalued = 0;
     for (const p of products) {
       const c = cnt[p.id];
-      if (!c || (!c.inv && !c.open && !c.onorder && !c.off)) continue;
+      if (!c || (!c.inv && !c.open && !c.onorder)) continue;
       if (q && !p.name.toLowerCase().includes(q.toLowerCase())) continue;
       if (!passesFilters(p, { type: typeF, misc: miscF })) continue;
       const asg = {};
       for (const b of boxes) {
-        if (b.product_id === p.id && b.state === 'in_inventory' && b.session_tag) {
+        if (b.product_id === p.id && b.state === 'in_inventory' && isFloor(b) && b.session_tag) {
           asg[b.session_tag] = (asg[b.session_tag] || 0) + 1;
         }
       }
-      // Value what we OWN, floor and off-site alike — a box in a distributor's
-      // warehouse is still an asset. `inv` is floor-only by design (see
-      // logic/boxes.js), so off-site has to be added back deliberately here.
-      const held = (c.inv || 0) + (c.open || 0) + (c.off || 0);
+      // THIS SCREEN IS OPERATIONAL. Every number on it — counts and money alike —
+      // is stock on this hall's floor, because the question it answers is "what
+      // can we play and what do we need". Owned-but-elsewhere lives on its own
+      // screen; mixing the two here is what made the figures unreadable.
+      const held = (c.inv || 0) + (c.open || 0);
       // a case that splits into 16 totes is worth 1/16 per tote, not the case
       // price per tote
       const value = held * perBoxValue(p);
       totVal += value;
-      // the accounting/operations bridge: the same rows, split by where they are
-      if (c.off) { offVal += (c.off || 0) * perBoxValue(p); offBoxes += c.off; }
       if (needsCost(p)) unvalued += held;   // counted, but we can't put a number on it yet
       out.push({
         p, c, value,
         s: {
           name: p.name.toLowerCase(), vendor: vmap[p.vendor_id]?.name || '', type: p.type,
           tickets: p.tickets || 0, price: ticketPrice(p), cost: Number(p.cost) || 0,
-          inv: c.inv || 0, off: c.off || 0, open: c.open || 0, onorder: c.onorder || 0, value,
+          inv: c.inv || 0, open: c.open || 0, onorder: c.onorder || 0, value,
           unit: stockUnit(p)[1],
           assigned: Object.keys(asg).join(', '),
         },
@@ -90,8 +88,6 @@ export default function Inventory() {
     });
     out.totVal = totVal;
     out.unvalued = unvalued;
-    out.offVal = offVal;
-    out.offBoxes = offBoxes;
     return out;
   }, [products, boxes, cnt, q, typeF, miscF, sortKey, dir, vmap]);
 
@@ -102,7 +98,8 @@ export default function Inventory() {
   const arrow = (k) => (k === sortKey ? (dir > 0 ? ' ▲' : ' ▼') : '');
 
   const openOne = async (row) => {
-    const pool = boxes.filter((b) => b.product_id === row.p.id && b.state === 'in_inventory');
+    // an off-site box cannot be opened on a floor it is not on
+    const pool = boxes.filter((b) => b.product_id === row.p.id && b.state === 'in_inventory' && isFloor(b));
     if (!pool.length) { setToast('No boxes in stock for this game'); return; }
     const box = pool.find((b) => b.session_tag === openSession) || pool.find((b) => !b.session_tag) || pool[0];
     await store.updateBox(box.id, { opened_session: openSession });
@@ -152,12 +149,7 @@ export default function Inventory() {
         </select>
         <div className="grow" />
         <span className="dim" style={{ fontSize: 13 }}>
-          {rows.length} products with stock · owned value <b className="mono">{fmtMoney(rows.totVal)}</b>
-          {rows.offBoxes > 0 && (
-            <span className="dimmer" title="Owned value includes stock held off-site. It is an asset; it is not playable.">
-              {' '}(incl. {rows.offBoxes} off-site, {fmtMoney(rows.offVal)})
-            </span>
-          )}
+          {rows.length} products on the floor · value here <b className="mono">{fmtMoney(rows.totVal)}</b>
           {rows.unvalued > 0 && (
             <span className="tbd" style={{ cursor: 'default', fontSize: 12 }}
               title={`${rows.unvalued} units have no cost yet, so they aren't in this figure`}>
@@ -237,11 +229,6 @@ export default function Inventory() {
                 <td className="dimmer" style={{ fontSize: 12 }}
                   title={`Every count on this row — in stock, opened, on order — is in ${stockUnit(r.p)[1]}`}>
                   {unitLabel(r.p, r.c.inv || 0)}
-                </td>
-                <td className="r mono" title={Object.entries(r.c.offBy || {})
-                      .map(([k, n]) => `${n} ${locationShort(k)}`).join(', ')}
-                    style={{ color: (r.c.off || 0) ? 'var(--teal)' : 'inherit' }}>
-                  {(r.c.off || 0) ? <b>{r.c.off}</b> : <span className="dimmer">—</span>}
                 </td>
                 <td className="r mono" style={{ color: 'var(--orange)' }}>{r.c.open || 0}</td>
                 <td className="r mono dimmer">{r.c.onorder || 0}</td>

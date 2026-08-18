@@ -37,9 +37,10 @@ export default function Sidebar() {
       <Item id="assign" label="Assign Pre-Sale" title="Rack the flash games for a session and print the Paymaster sheet" />
       <Item id="sessionuse" label="Session Use" title="What each session played, and taking it out of stock" />
       <Item id="openboxes" label="Open Boxes" />
-      <Item id="inventory" label="Inventory" />
-      <Item id="offsite" label="Off-site Stock"
-        title="Stock we own that isn't on the floor — held by a distributor or in storage. Counts toward value, never toward what can be played." />
+      <Item id="inventory" label="Inventory"
+        title="Operational — what is on this hall's floor and can be played tonight. Never includes off-site stock." />
+      <Item id="owned" label="Owned Inventory"
+        title="Accounting — everything we own wherever it sits, floor and off-site shown separately. Never use this to decide what to order." />
       <Item id="orders" label="Open Orders" badge={openPos || null} />
       <Item id="accounting" label="Accounting" badge={openPay || null} />
       <Item id="intake" label="Receiving" />

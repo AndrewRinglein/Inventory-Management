@@ -1,6 +1,7 @@
 import React, { useContext, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
 import { SESSIONS } from '../lib/sessions.js';
+import { isFloor, locationLabel } from '../lib/logic/location.js';
 
 export default function OpenBoxes() {
   const { hall, boxes, products, store, reloadHall, setToast, scanMode, setScanMode, productName, can, openSession, setOpenSession } = useContext(AppCtx);
@@ -32,6 +33,15 @@ export default function OpenBoxes() {
     if (!code) return;
     const b = boxes.find((x) => x.serial === code);
     if (!b) { setToast(`Serial "${code}" not found in this hall`); return; }
+    // scanning a serial that belongs to off-site stock means the box is not where
+    // the system thinks it is — say so rather than opening it on a floor it isn't on
+    if (!isFloor(b)) {
+      setToast(`That box is recorded as ${locationLabel(b.location)}`
+        + `${b.location_ref ? ' · ' + b.location_ref : ''}, not on the floor. `
+        + `Move it to the floor first if it has arrived.`);
+      setLookup('');
+      return;
+    }
     if (b.state === 'in_inventory') {
       store.updateBox(b.id, { opened_session: openSession })
         .then(() => store.transitionBox(b.id, 'opened'))

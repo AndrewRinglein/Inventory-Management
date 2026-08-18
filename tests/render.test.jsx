@@ -26,7 +26,7 @@ import AddDelivery from '../src/components/AddDelivery.jsx';
 import Assign from '../src/components/Assign.jsx';
 import History from '../src/components/History.jsx';
 import Adjust from '../src/components/Adjust.jsx';
-import Offsite from '../src/components/Offsite.jsx';
+import Owned from '../src/components/Owned.jsx';
 import SettingsScreen from '../src/components/SettingsScreen.jsx';
 import Sidebar from '../src/components/Sidebar.jsx';
 
@@ -86,7 +86,7 @@ const ctx = {
 
 const SCREENS = {
   Dashboard, Purchase, Review, Inventory, OpenBoxes, Orders, Accounting,
-  Receiving, Games, SessionUse, Assign, History, SettingsScreen, Sidebar, Offsite,
+  Receiving, Games, SessionUse, Assign, History, SettingsScreen, Sidebar, Owned,
   AddDelivery: (p) => <AddDelivery onClose={() => {}} {...p} />,
   Adjust: (p) => <Adjust onClose={() => {}} {...p} />,
 };

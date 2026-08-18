@@ -90,3 +90,18 @@ export const isStale = (box, today = new Date()) => {
   const d = daysSinceConfirmed(box, today);
   return d === null || d > STALE_DAYS;
 };
+
+/**
+ * Filter a box list down to what is physically on a hall floor.
+ *
+ * Every screen that asks an operational question has to go through this. The
+ * moment off-site boxes joined the same table, a bare
+ * `boxes.filter(b => b.state === 'in_inventory')` stopped meaning "available"
+ * and started meaning "owned" — silently, with no error, in the one direction
+ * that matters: it showed nineteen Monster Score when four were playable, and
+ * anyone reading it would decide not to order.
+ */
+export const onFloor = (boxes) => (boxes || []).filter(isFloor);
+
+/** Boxes that can be played or opened right now: on the floor and in stock. */
+export const playable = (boxes) => (boxes || []).filter(isPlayable);

@@ -9,7 +9,7 @@ import Dashboard from './components/Dashboard.jsx';
 import Purchase from './components/Purchase.jsx';
 import Review from './components/Review.jsx';
 import Inventory from './components/Inventory.jsx';
-import Offsite from './components/Offsite.jsx';
+import Owned from './components/Owned.jsx';
 import OpenBoxes from './components/OpenBoxes.jsx';
 import Orders from './components/Orders.jsx';
 import Accounting from './components/Accounting.jsx';
@@ -235,7 +235,7 @@ export default function App() {
 
   const SCREENS = {
     dashboard: Dashboard, purchase: Purchase, review: Review, inventory: Inventory,
-    offsite: Offsite,
+    owned: Owned,
     openboxes: OpenBoxes, orders: Orders, accounting: Accounting, intake: Receiving,
     games: Games, settings: SettingsScreen, sessionuse: SessionUse, assign: Assign,
     history: History,

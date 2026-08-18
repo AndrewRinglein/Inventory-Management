@@ -2,6 +2,7 @@ import React, { useContext, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
 import { fmtMoney } from '../lib/logic/po.js';
 import { perBoxValue, stockUnit } from '../lib/logic/pricing.js';
+import { isFloor } from '../lib/logic/location.js';
 
 /**
  * Record a stock change and say why.
@@ -35,7 +36,8 @@ function GamePick({ value, onPick, hall, boxes, products, placeholder }) {
   const [q, setQ] = useState('');
   const stocked = useMemo(() => {
     const n = {};
-    for (const b of boxes) if (b.hall_id === hall && b.state === 'in_inventory') n[b.product_id] = (n[b.product_id] || 0) + 1;
+    // floor only — you cannot adjust a box sitting in a distributor's warehouse
+    for (const b of boxes) if (b.hall_id === hall && b.state === 'in_inventory' && isFloor(b)) n[b.product_id] = (n[b.product_id] || 0) + 1;
     return n;
   }, [boxes, hall]);
   const hits = useMemo(() => {
@@ -95,7 +97,8 @@ export default function Adjust({ onClose, preset }) {
   const addsOnly = reason === 'found';
   const twoSided = meta.twoSided || meta.crossHall;
 
-  const stockOf = (p) => (p ? boxes.filter((b) => b.hall_id === hall && b.product_id === p.id && b.state === 'in_inventory').length : 0);
+  const stockOf = (p) => (p ? boxes.filter((b) => b.hall_id === hall && b.product_id === p.id
+    && b.state === 'in_inventory' && isFloor(b)).length : 0);
   const nOut = Math.max(0, parseInt(outN) || 0);
   const nIn = Math.max(0, parseInt(inN) || 0);
   const short = !addsOnly && outP && nOut > stockOf(outP);

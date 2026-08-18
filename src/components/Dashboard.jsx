@@ -1,6 +1,7 @@
 import React, { useContext, useEffect, useState } from 'react';
 import { AppCtx } from '../App.jsx';
 import { fmtMoney, sumMoney } from '../lib/logic/po.js';
+import { onFloor, isOffsite } from '../lib/logic/location.js';
 
 const HALL_NAMES = { sc: 'Santa Clara', rwc: 'Redwood City' };
 
@@ -22,7 +23,12 @@ export default function Dashboard() {
   // writes a delivery, and a hall that receives through the PO flow saw an empty list
   useEffect(() => { store.getArrivals(hall).then(setDels).catch(() => setDels([])); }, [hall, boxes, pos]);   // eslint-disable-line
 
-  const live = boxes.filter((b) => b.state === 'in_inventory' || b.state === 'opened');
+  // ON THE FLOOR. Stock a distributor is holding is owned, not available, and
+  // folding it in here would overstate every number on this screen.
+  const floor = onFloor(boxes);
+  const offCount = boxes.filter((b) => isOffsite(b)
+    && (b.state === 'in_inventory' || b.state === 'opened')).length;
+  const live = floor.filter((b) => b.state === 'in_inventory' || b.state === 'opened');
   const liveVal = sumMoney(live, (b) => b.cost);
   // boxes on an archived order aren't really in transit any more — the order left
   // the working views, so it shouldn't keep feeding the dashboard a number
@@ -51,7 +57,7 @@ export default function Dashboard() {
       </div>
       <div className="stat-grid">
         <div className="card pad stat"><label>Live inventory value</label><div className="v">{fmtMoney(liveVal)}</div><div className="s">{live.length} boxes owned</div></div>
-        <div className="card pad stat"><label>Boxes in stock</label><div className="v">{boxes.filter((b) => b.state === 'in_inventory').length}</div><div className="s">{boxes.filter((b) => b.state === 'opened').length} opened on floor</div></div>
+        <div className="card pad stat"><label>Boxes on the floor</label><div className="v">{floor.filter((b) => b.state === 'in_inventory').length}</div><div className="s">{floor.filter((b) => b.state === 'opened').length} opened on floor{offCount > 0 ? ` · ${offCount} off-site` : ''}</div></div>
         <div className="card pad stat"><label>Open orders</label><div className="v">{openPos.length}</div><div className="s">{inTransit} boxes in transit</div></div>
         <div className="card pad stat"><label>Ordered this month</label><div className="v">{fmtMoney(monthSpend)}</div><div className="s">{monthPos.length} order{monthPos.length === 1 ? '' : 's'} · {dels.length} arrival{dels.length === 1 ? '' : 's'} logged</div></div>
         <div className="card pad stat"><label>Open payments</label><div className="v">{fmtMoney(sumMoney(openPay, (p) => p.amount))}</div><div className="s">{openPay.length} invoices awaiting payment</div></div>

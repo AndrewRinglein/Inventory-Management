@@ -40,7 +40,6 @@ const sortVal = (p, k, cnt) => {
     case 'packing': return Number(p.packing_units) || 0;
     case 'cost': return Number(p.cost) || 0;
     case 'live': return (c.inv || 0) + (c.open || 0);
-    case 'off': return c.off || 0;
     case 'onorder': return c.onorder || 0;
     default: return p.name.toLowerCase();
   }
@@ -205,9 +204,7 @@ export default function Purchase() {
             <th className="r sortable" style={{ width: 86 }} onClick={() => sortBy('packing')} title="Packing on one ordered unit">Packing{arrow('packing')}</th>
             <th className="r sortable" style={{ width: 106 }} onClick={() => sortBy('cost')} title="Base × deals + packing">Unit total{arrow('cost')}</th>
             <th className="r sortable" style={{ width: 66 }} onClick={() => sortBy('live')}
-                title="On the floor at this hall — what can actually be played">Live{arrow('live')}</th>
-            <th className="r sortable" style={{ width: 76 }} onClick={() => sortBy('off')}
-                title="Already ours, but held by a distributor or sat in storage. Ship it rather than buying more.">Off-site{arrow('off')}</th>
+                title="On the floor at this hall — what can actually be played. Never includes stock held off-site.">Live{arrow('live')}</th>
             <th className="r sortable" style={{ width: 78 }} onClick={() => sortBy('onorder')}>On order{arrow('onorder')}</th>
             <th style={{ textAlign: 'center', width: 96 }}>Units</th>
             <th className="r last" style={{ width: 118 }}>Line total</th>
@@ -239,15 +236,6 @@ export default function Purchase() {
                     {pp.splits && <div className="dimmer" style={{ fontSize: 10.5 }}>→ {pp.split} boxes @ {fmtMoney(pp.perBox)}</div>}
                   </td>
                   <td className="r mono">{(c.inv || 0) + (c.open || 0)}</td>
-                  {/* The whole point of the location column: you should never be
-                      typing a quantity into a game you already own elsewhere
-                      without being told so. */}
-                  <td className="r mono" title={(c.off || 0)
-                        ? `${Object.entries(c.offBy || {}).map(([k, v]) => `${v} ${locationShort(k)}`).join(', ')} — ship this before buying more`
-                        : ''}
-                      style={{ color: (c.off || 0) ? 'var(--teal)' : 'inherit', fontWeight: (c.off || 0) ? 700 : 400 }}>
-                    {(c.off || 0) || <span className="dimmer">—</span>}
-                  </td>
                   <td className="r mono dimmer">{c.onorder || 0}</td>
                   <td style={{ textAlign: 'center' }}>
                     {needsVendor(p)

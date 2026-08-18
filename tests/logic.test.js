@@ -12,7 +12,7 @@ import { isGrabBag } from '../src/lib/logic/categories.js';
 import { priceParts, boxCost, baseCost, packUnits, packingFor } from '../src/lib/logic/pricing.js';
 import { receivedLine, missingLine, extraLine, perUnitOf, lineSplit } from '../src/lib/logic/receiving.js';
 import { writeOffCost, wantedFromPlays, consumeOrder } from '../src/lib/logic/session.js';
-import { coverShortage, shortageAdvice, isPlayable, isOwned } from '../src/lib/logic/location.js';
+import { coverShortage, shortageAdvice, isPlayable, isOwned, onFloor, playable } from '../src/lib/logic/location.js';
 import { DemoStore } from '../src/lib/store/demoStore.js';
 
 /**
@@ -1243,4 +1243,34 @@ test('a write-off is valued per box, not per ordered unit', () => {
   assert.equal(writeOffCost({ base_cost: 512, pack_units: 1, split_boxes: 8 }), 64);
   assert.equal(writeOffCost({ base_cost: 19.5, pack_units: 11, split_boxes: 11 }), 19.5);
   assert.equal(writeOffCost(undefined), 0);
+});
+
+// The regression that prompted the split: fifteen Monster Score sitting at
+// Marathon made a raw in_inventory count read nineteen when four were playable,
+// and anyone reading nineteen decides not to order.
+
+test('the operational number never includes stock held elsewhere', () => {
+  const boxes = [
+    ...Array.from({ length: 4 }, (_, i) => ({ id: 'f' + i, product_id: 'N904', state: 'in_inventory' })),
+    ...Array.from({ length: 15 }, (_, i) => ({ id: 'v' + i, product_id: 'N904', state: 'in_inventory', location: 'vendor' })),
+    ...Array.from({ length: 4 }, (_, i) => ({ id: 'o' + i, product_id: 'N904', state: 'on_order' })),
+  ];
+  const c = countByProduct(boxes).N904;
+  assert.equal(c.inv, 4, 'available is four, not nineteen');
+  assert.equal(c.off, 15);
+  assert.equal(c.owned, 19, 'accounting still sees all nineteen');
+  assert.equal(c.onorder, 4, 'on order is a commitment, counted apart from both');
+  // and the two must never be the same number
+  assert.notEqual(c.inv, c.owned);
+});
+
+test('onFloor is the one filter every operational screen goes through', () => {
+  const boxes = [
+    { id: 'a', state: 'in_inventory' },
+    { id: 'b', state: 'in_inventory', location: 'hall' },
+    { id: 'c', state: 'in_inventory', location: 'vendor' },
+    { id: 'd', state: 'opened', location: 'storage' },
+  ];
+  assert.deepEqual(onFloor(boxes).map((b) => b.id), ['a', 'b']);
+  assert.deepEqual(playable(boxes).map((b) => b.id), ['a', 'b']);
 });
