@@ -49,7 +49,10 @@ export default function Inventory() {
     let totVal = 0, unvalued = 0;
     for (const p of products) {
       const c = cnt[p.id];
-      if (!c || (!c.inv && !c.open && !c.onorder)) continue;
+      // include games whose whole position is off-site. The row reads 0 available,
+      // which is the honest operational answer — dropping it entirely made the game
+      // most in need of a shipment indistinguishable from one the hall doesn't carry.
+      if (!c || (!c.inv && !c.open && !c.onorder && !c.off)) continue;
       if (q && !p.name.toLowerCase().includes(q.toLowerCase())) continue;
       if (!passesFilters(p, { type: typeF, misc: miscF })) continue;
       const asg = {};
@@ -149,7 +152,7 @@ export default function Inventory() {
         </select>
         <div className="grow" />
         <span className="dim" style={{ fontSize: 13 }}>
-          {rows.length} products on the floor · value here <b className="mono">{fmtMoney(rows.totVal)}</b>
+          {rows.length} products in stock · on the floor, <b className="mono">{fmtMoney(rows.totVal)}</b>
           {rows.unvalued > 0 && (
             <span className="tbd" style={{ cursor: 'default', fontSize: 12 }}
               title={`${rows.unvalued} units have no cost yet, so they aren't in this figure`}>
@@ -225,6 +228,12 @@ export default function Inventory() {
                         <b>{r.c.inv || 0}</b> ✎
                       </button>
                     : <b>{r.c.inv || 0}</b>}
+                  {!r.c.inv && !r.c.open && (r.c.off || 0) > 0 && (
+                    <div className="dimmer" style={{ fontSize: 10.5, fontWeight: 400 }}
+                         title="Owned but not here — see Owned Inventory to bring it in">
+                      {r.c.off} off-site
+                    </div>
+                  )}
                 </td>
                 <td className="dimmer" style={{ fontSize: 12 }}
                   title={`Every count on this row — in stock, opened, on order — is in ${stockUnit(r.p)[1]}`}>

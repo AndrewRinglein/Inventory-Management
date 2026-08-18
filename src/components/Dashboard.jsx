@@ -56,7 +56,7 @@ export default function Dashboard() {
         {can('boxes') && <button className="btn ghost sm" onClick={markEom} title="Record that the end-of-month inventory check for this hall is done">✓ Mark EOM done</button>}
       </div>
       <div className="stat-grid">
-        <div className="card pad stat"><label>Live inventory value</label><div className="v">{fmtMoney(liveVal)}</div><div className="s">{live.length} boxes owned</div></div>
+        <div className="card pad stat"><label>Live inventory value</label><div className="v">{fmtMoney(liveVal)}</div><div className="s">{live.length} boxes on the floor</div></div>
         <div className="card pad stat"><label>Boxes on the floor</label><div className="v">{floor.filter((b) => b.state === 'in_inventory').length}</div><div className="s">{floor.filter((b) => b.state === 'opened').length} opened on floor{offCount > 0 ? ` · ${offCount} off-site` : ''}</div></div>
         <div className="card pad stat"><label>Open orders</label><div className="v">{openPos.length}</div><div className="s">{inTransit} boxes in transit</div></div>
         <div className="card pad stat"><label>Ordered this month</label><div className="v">{fmtMoney(monthSpend)}</div><div className="s">{monthPos.length} order{monthPos.length === 1 ? '' : 's'} · {dels.length} arrival{dels.length === 1 ? '' : 's'} logged</div></div>

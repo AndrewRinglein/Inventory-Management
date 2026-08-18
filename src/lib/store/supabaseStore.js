@@ -227,22 +227,37 @@ export class SupabaseStore {
     if (!n) return;
     if (delta > 0) {
       const rows = Array.from({ length: n }, () => ({
-        hall_id: hallId, product_id: product.id, state: 'in_inventory',
+        hall_id: hallId, product_id: product.id, state: 'in_inventory', location: 'hall',
         cost: perBoxValue(product), serial: '', received_at: new Date().toISOString(),
       }));
       ok(await this.sb.from('boxes').insert(rows));
     } else {
+      // ON THE FLOOR. An adjustment describes something that happened to stock
+      // in this hall — damaged, miscounted, found. Without this filter the write
+      // reached into boxes a distributor is holding: the operator writes off four
+      // that went missing here, four vendor boxes get marked missing instead, the
+      // floor count does not move, and they do it again until off-site drains.
       const pool = ok(await this.sb.from('boxes').select('id')
         .eq('hall_id', hallId).eq('product_id', product.id).eq('state', 'in_inventory')
+        .eq('location', 'hall')
         .is('session_tag', null).limit(n));
       const ids = pool.map((b) => b.id);
       if (ids.length < n) {   // fall back to set-aside boxes only if we must
         const extra = ok(await this.sb.from('boxes').select('id')
           .eq('hall_id', hallId).eq('product_id', product.id).eq('state', 'in_inventory')
+          .eq('location', 'hall')
           .not('session_tag', 'is', null).limit(n - ids.length));
         ids.push(...extra.map((b) => b.id));
       }
+      // Do not silently under-apply. Taking two off when five were asked for and
+      // logging delta -5 makes the history claim something that did not happen —
+      // addAdjustment already refuses in this situation, and the two entry points
+      // must not disagree.
       if (!ids.length) throw new Error('No boxes in stock to remove');
+      if (ids.length < n) {
+        throw new Error(`Only ${ids.length} on the floor — cannot take ${n} off.`
+          + ` Anything held off-site has to be brought in first.`);
+      }
       ok(await this.sb.from('boxes').update({ state: 'missing' }).in('id', ids));
     }
     await this.logEvent('adjust', 'products', product.id, { label, note, delta, hall: hallId });
@@ -294,11 +309,13 @@ export class SupabaseStore {
           // prefer boxes not set aside for a session, same as adjustStock
           const free = ok(await this.sb.from('boxes').select('id')
             .eq('hall_id', lineHall).eq('product_id', p.id).eq('state', 'in_inventory')
+            .eq('location', 'hall')                       // floor only — see adjustStock
             .is('session_tag', null).limit(n));
           const pick = free.map((b) => b.id);
           if (pick.length < n) {
             const extra = ok(await this.sb.from('boxes').select('id')
               .eq('hall_id', lineHall).eq('product_id', p.id).eq('state', 'in_inventory')
+              .eq('location', 'hall')
               .not('session_tag', 'is', null).limit(n - pick.length));
             pick.push(...extra.map((b) => b.id));
           }
@@ -690,7 +707,7 @@ export class SupabaseStore {
    */
   async getReceiptDetail(shipmentId) {
     const rows = await fetchAll(() => this.sb.from('boxes')
-      .select('id,product_id,cost,state,serial,po_id').eq('shipment_id', shipmentId));
+      .select('id,product_id,cost,state,serial,po_id,location').eq('shipment_id', shipmentId));
     if (!rows.length) return [];
     const ids = [...new Set(rows.map((b) => b.product_id).filter(Boolean))];
     const prods = Object.fromEntries((ok(await this.sb.from('products').select('id,name').in('id', ids)))
@@ -699,9 +716,10 @@ export class SupabaseStore {
     for (const b of rows) {
       const g = (byProduct[b.product_id] ||= {
         product_id: b.product_id, name: prods[b.product_id] || b.product_id,
-        boxes: 0, value: 0, serials: [], states: {},
+        boxes: 0, value: 0, serials: [], states: {}, offNow: 0,
       });
       g.boxes += 1;
+      if ((b.location || 'hall') !== 'hall') g.offNow += 1;
       g.value = round2(g.value + (Number(b.cost) || 0));
       if (b.serial) g.serials.push(b.serial);
       g.states[b.state] = (g.states[b.state] || 0) + 1;
@@ -735,34 +753,61 @@ export class SupabaseStore {
    * them, so shipping "four Lucky Kat" takes the four that have been sitting
    * longest rather than an arbitrary four.
    */
-  async moveBoxes({ hallId, productId, from, to, qty, ref = null, note = '' }) {
+  async moveBoxes({ hallId, productId, from, to, qty, ref = null, fromRef, ids = null,
+                    states = ['in_inventory', 'opened'], note = '' }) {
     if (from === to) throw new Error('That stock is already there.');
+    if (!['hall', 'vendor', 'storage'].includes(to)) throw new Error(`Unknown location "${to}".`);
     const n = Math.max(0, parseInt(qty) || 0);
     if (!n) throw new Error('How many boxes?');
-    const pool = ok(await this.sb.from('boxes').select('id')
-      .eq('hall_id', hallId).eq('product_id', productId)
-      .eq('location', from)
-      .in('state', ['in_inventory', 'opened'])
-      .is('session_id', null)
-      .order('received_at', { nullsFirst: true }).order('id')
-      .limit(n));
+    // `ids` is how the UI should call this. The Owned screen groups rows by
+    // product AND location_ref, so "ship the Marathon row" has to move Marathon's
+    // boxes; selecting on product+location alone moved whichever ref happened to
+    // sort first and marked the wrong distributor's stock as arrived.
+    let pool;
+    if (ids?.length) {
+      // filter FIRST, then take n — slicing the caller's id list first meant a
+      // single box already moved by someone else turned a valid request into
+      // "only 1 box is there", and the demo store disagreed about which pair moved
+      pool = (ok(await this.sb.from('boxes').select('id')
+        .in('id', ids).eq('location', from)
+        .in('state', states).is('session_id', null))).slice(0, n);
+    } else {
+      let q = this.sb.from('boxes').select('id')
+        .eq('hall_id', hallId).eq('product_id', productId)
+        .eq('location', from)
+        .in('state', states)
+        .is('session_id', null)
+        // boxes racked for a session are spoken for — don't ship them out from
+        // under Assign
+        .is('session_tag', null);
+      if (fromRef !== undefined) {
+        q = fromRef === null ? q.is('location_ref', null) : q.eq('location_ref', fromRef);
+      }
+      pool = ok(await q.order('received_at', { nullsFirst: true }).order('id').limit(n));
+    }
     if (pool.length < n) {
       throw new Error(`Only ${pool.length} box(es) of that are ${from === 'hall' ? 'on the floor' : 'at ' + from}, `
         + `so ${n} cannot move.`);
     }
-    const ids = pool.map((b) => b.id);
+    const picked = pool.map((b) => b.id);
+    // look the name up BEFORE the write: doing it after meant a lookup failure
+    // reported "could not move" when the boxes had already moved, and the user
+    // would ship them twice
+    const prod = (ok(await this.sb.from('products').select('name').eq('id', productId).limit(1)))[0];
     ok(await this.sb.from('boxes').update({
       location: to, location_ref: to === 'hall' ? null : (ref || null),
-      // arriving on the floor is a fresh physical sighting; leaving it is not
-      counted_at: to === 'hall' ? new Date().toISOString().slice(0, 10) : null,
-    }).in('id', ids));
-    const prod = ok(await this.sb.from('products').select('name').eq('id', productId).single());
-    await this.logEvent('stock.move', 'boxes', ids[0], {
+      // ANY move means someone physically handled every box, so it is a sighting
+      // wherever it lands. Blanking this on the way out made freshly-stored stock
+      // appear instantly in the "not confirmed in 60 days" banner, which trains
+      // people to ignore the banner.
+      counted_at: new Date().toISOString().slice(0, 10),
+    }).in('id', picked));
+    await this.logEvent('stock.move', 'boxes', picked[0], {
       label: `${prod?.name || productId} — ${n} box(es) moved ${from} → ${to}`
            + (ref ? ` (${ref})` : ''),
-      hall: hallId, product_id: productId, from, to, qty: n, ref, note, box_ids: ids,
+      hall: hallId, product_id: productId, from, to, qty: n, ref, note, box_ids: picked,
     });
-    return { moved: n, ids };
+    return { moved: n, ids: picked };
   }
 
   /** Everything this hall owns that is not on its floor, newest confirmation first. */

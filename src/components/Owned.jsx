@@ -30,6 +30,10 @@ export default function Owned() {
   const [busy, setBusy] = useState(false);
   const [ship, setShip] = useState(null);      // the group being brought to the hall
   const [qty, setQty] = useState('');
+  // sending stock OUT. Without this the feature is a one-way door: you can drain
+  // off-site stock through the UI but only create it with hand-written SQL.
+  const [send, setSend] = useState(null);      // {productId, to, ref, qty}
+  const [pick, setPick] = useState('');
 
   const load = () => {
     setLoading(true);
@@ -52,7 +56,7 @@ export default function Owned() {
     let totVal = 0, floorVal = 0, offVal = 0;
     for (const p of products) {
       const c = cnt[p.id];
-      if (!c || !c.owned) continue;
+      if (!c || (!c.owned && !c.onorder)) continue;
       const floor = (c.inv || 0) + (c.open || 0);
       const per = perBoxValue(p);
       const value = c.owned * per;
@@ -88,6 +92,26 @@ export default function Owned() {
     finally { setBusy(false); }
   };
 
+  const doSend = async () => {
+    if (busy || !send?.productId) return;
+    const n = Math.max(1, parseInt(send.qty) || 0);
+    setBusy(true);
+    try {
+      await store.moveBoxes({
+        hallId: hall, productId: send.productId, from: 'hall', to: send.to,
+        qty: n, ref: send.ref?.trim() || null,
+        // the picker counts sealed stock, so move sealed stock — shipping a
+        // part-sold box out of the hall loses the open box off the floor
+        states: ['in_inventory'],
+      });
+      setSend(null); setPick('');
+      await reloadHall();
+      load();
+      setToast(`${n} box(es) moved off the floor to ${locationLabel(send.to)}`);
+    } catch (e) { setToast(e.message || 'Could not move that stock'); }
+    finally { setBusy(false); }
+  };
+
   const doShip = async () => {
     if (busy || !ship) return;
     const n = Math.max(1, parseInt(qty) || 0);
@@ -95,6 +119,9 @@ export default function Owned() {
     try {
       await store.moveBoxes({
         hallId: hall, productId: ship.product_id, from: ship.location, to: 'hall', qty: n,
+        // the row is one product at ONE location_ref; move those exact boxes,
+        // not whichever of that product's off-site boxes sorts first
+        fromRef: ship.location_ref ?? null, ids: ship.ids,
       });
       setShip(null); setQty('');
       await reloadHall();
@@ -109,8 +136,15 @@ export default function Owned() {
       <div className="page-head">
         <div className="h1">Owned inventory — {HALLS[hall]}</div>
         <div className="grow" />
+        {can('boxes') && (
+          <button className="btn sm ghost" style={{ marginRight: 10 }}
+            onClick={() => { setSend({ productId: '', to: 'storage', ref: '', qty: '1' }); setPick(''); }}>
+            Send stock off-site
+          </button>
+        )}
         <span className="dimmer" style={{ fontSize: 12.5 }}>
-          {loading ? 'loading…' : `${totals.boxes} box(es), ${fmtMoney(totals.value)}`}
+          {loading ? 'loading…'
+            : `${owned.reduce((a, r) => a + r.owned, 0)} box(es) owned · ${fmtMoney(owned.totVal)}`}
         </span>
       </div>
 
@@ -122,7 +156,7 @@ export default function Owned() {
         {totals.stale > 0 && (
           <div style={{ marginTop: 8, padding: '8px 10px', background: '#fdf8ee',
                         border: '1px solid #e2c39a', borderRadius: 6 }}>
-            <b>{totals.stale} box(es) haven't been confirmed in over {STALE_DAYS} days.</b>{' '}
+            <b>{totals.stale} box(es) sit in a group nobody has confirmed in over {STALE_DAYS} days.</b>{' '}
             Nothing here gets counted on a session night, so this is the only thing standing
             between a storage unit and a surprise.
           </div>
@@ -138,6 +172,10 @@ export default function Owned() {
         )}
       </div>
 
+      {/* All three figures are catalogue value (perBoxValue), so floor + off-site
+          reconciles to owned. The detail table lower down sums each box's RECORDED
+          cost instead, which is the right basis there — it is answering "what did
+          this particular stock cost" — and the two can differ after a price change. */}
       <div className="card pad" style={{ marginBottom: 12, display: 'flex', gap: 22, flexWrap: 'wrap' }}>
         <span><label className="dimmer" style={{ fontSize: 11, display: 'block' }}>Owned value</label>
           <b className="mono" style={{ fontSize: 16 }}>{fmtMoney(owned.totVal)}</b></span>
@@ -235,6 +273,62 @@ export default function Owned() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {send && (
+        <div className="modal-bg" onClick={() => !busy && setSend(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 520 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6 }}>Send stock off the floor</div>
+            <p style={{ fontSize: 13 }}>
+              The boxes stay in stock and keep their value — only where they are changes.
+              They stop counting toward what can be played tonight straight away.
+            </p>
+            <label style={{ display: 'block', fontSize: 12.5, marginTop: 8 }}>
+              Game
+              <input type="text" value={pick} placeholder="Type to find a game with floor stock…"
+                style={{ display: 'block', width: '100%', marginTop: 3 }}
+                onChange={(e) => { setPick(e.target.value); setSend({ ...send, productId: '' }); }} />
+            </label>
+            {pick.trim().length >= 2 && !send.productId && (
+              <div style={{ maxHeight: 150, overflowY: 'auto', border: '1px solid var(--border)',
+                            borderRadius: 6, marginTop: 4 }}>
+                {products
+                  .filter((p) => ((cnt[p.id]?.inv || 0) > 0)
+                    && p.name.toLowerCase().includes(pick.trim().toLowerCase()))
+                  .slice(0, 12)
+                  .map((p) => (
+                    <div key={p.id} className="nav-item" style={{ cursor: 'pointer', fontSize: 12.5 }}
+                      onClick={() => { setSend({ ...send, productId: p.id }); setPick(p.name); }}>
+                      {p.name} <span className="dimmer">· {cnt[p.id].inv} on the floor</span>
+                    </div>
+                  ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
+              <label style={{ fontSize: 12.5 }}>How many
+                <input type="number" min="1" max={cnt[send.productId]?.inv || 1} value={send.qty}
+                  style={{ marginLeft: 8, width: 80 }}
+                  onChange={(e) => setSend({ ...send, qty: e.target.value })} /></label>
+              <label style={{ fontSize: 12.5 }}>Where
+                <select value={send.to} style={{ marginLeft: 8 }}
+                  onChange={(e) => setSend({ ...send, to: e.target.value })}>
+                  {LOCATIONS.filter((l) => l.id !== 'hall')
+                    .map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+                </select></label>
+              <label style={{ fontSize: 12.5, flex: 1, minWidth: 180 }}>Which one
+                <input type="text" value={send.ref} placeholder="Marathon · Unit 14 · …"
+                  style={{ display: 'block', width: '100%', marginTop: 3 }}
+                  onChange={(e) => setSend({ ...send, ref: e.target.value })} /></label>
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <button className="btn primary" disabled={busy || !send.productId} onClick={doSend}>
+                {busy ? 'Working…' : 'Move it off the floor'}
+              </button>
+              <div style={{ flex: 1 }} />
+              <button className="btn ghost" disabled={busy} onClick={() => setSend(null)}>Cancel</button>
+            </div>
+          </div>
         </div>
       )}
 

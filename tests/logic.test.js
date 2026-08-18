@@ -12,7 +12,8 @@ import { isGrabBag } from '../src/lib/logic/categories.js';
 import { priceParts, boxCost, baseCost, packUnits, packingFor } from '../src/lib/logic/pricing.js';
 import { receivedLine, missingLine, extraLine, perUnitOf, lineSplit } from '../src/lib/logic/receiving.js';
 import { writeOffCost, wantedFromPlays, consumeOrder } from '../src/lib/logic/session.js';
-import { coverShortage, shortageAdvice, isPlayable, isOwned, onFloor, playable } from '../src/lib/logic/location.js';
+import { coverShortage, shortageAdvice, onFloor, playable, daysSinceConfirmed }
+  from '../src/lib/logic/location.js';
 import { DemoStore } from '../src/lib/store/demoStore.js';
 
 /**
@@ -1264,7 +1265,7 @@ test('the operational number never includes stock held elsewhere', () => {
   assert.notEqual(c.inv, c.owned);
 });
 
-test('onFloor is the one filter every operational screen goes through', () => {
+test('onFloor filters a list down to floor stock', () => {
   const boxes = [
     { id: 'a', state: 'in_inventory' },
     { id: 'b', state: 'in_inventory', location: 'hall' },
@@ -1273,4 +1274,154 @@ test('onFloor is the one filter every operational screen goes through', () => {
   ];
   assert.deepEqual(onFloor(boxes).map((b) => b.id), ['a', 'b']);
   assert.deepEqual(playable(boxes).map((b) => b.id), ['a', 'b']);
+});
+
+// ---------- regressions from the adversarial review of the location change ----------
+
+test('an adjustment writes off floor boxes, never off-site ones', async () => {
+  // Reported bug: Adjust.jsx validated against floor stock but the store selected
+  // its pool with no location filter, so writing off four boxes lost on the floor
+  // marked four of the distributor's boxes missing instead. The floor count never
+  // moved, so the operator would repeat it until off-site drained to nothing.
+  const store = shortStore();
+  store.db.boxes = [
+    ...Array.from({ length: 2 }, (_, i) => ({ id: 'f' + i, hall_id: 'sc', product_id: 'G1', state: 'in_inventory' })),
+    ...Array.from({ length: 5 }, (_, i) => ({ id: 'v' + i, hall_id: 'sc', product_id: 'G1',
+      state: 'in_inventory', location: 'vendor' })),
+  ];
+  await store.adjustStock({ hallId: 'sc', product: store.db.products[0], delta: -2, note: 'lost on the floor' });
+  const missing = store.db.boxes.filter((b) => b.state === 'missing');
+  assert.equal(missing.length, 2);
+  assert.ok(missing.every((b) => (b.location || 'hall') === 'hall'),
+    `wrote off ${missing.map((b) => b.id)} — off-site boxes must never be touched`);
+  assert.equal(store.db.boxes.filter((b) => b.location === 'vendor').length, 5);
+});
+
+test('shipping moves the boxes from the row you clicked, not another distributor', async () => {
+  // Reported bug: getOffsite groups by product AND location_ref, but moveBoxes
+  // matched on product+location only, so "ship the Marathon row" could bring in
+  // Trade Products' stock and mark the wrong distributor as delivered.
+  const store = shortStore();
+  store.db.boxes = [
+    { id: 'm1', hall_id: 'sc', product_id: 'G1', state: 'in_inventory', location: 'vendor', location_ref: 'Marathon' },
+    { id: 't1', hall_id: 'sc', product_id: 'G1', state: 'in_inventory', location: 'vendor', location_ref: 'Trade Products' },
+  ];
+  await store.moveBoxes({ hallId: 'sc', productId: 'G1', from: 'vendor', to: 'hall', qty: 1,
+    fromRef: 'Marathon', ids: ['m1'] });
+  assert.equal(store.db.boxes.find((b) => b.id === 'm1').location, 'hall');
+  assert.equal(store.db.boxes.find((b) => b.id === 't1').location, 'vendor');
+});
+
+test('a move stamps a sighting whichever way it goes', async () => {
+  const store = shortStore();
+  store.db.boxes = [{ id: 'f1', hall_id: 'sc', product_id: 'G1', state: 'in_inventory' }];
+  await store.moveBoxes({ hallId: 'sc', productId: 'G1', from: 'hall', to: 'storage', qty: 1, ref: 'Unit 14' });
+  const b = store.db.boxes[0];
+  assert.equal(b.location, 'storage');
+  assert.equal(b.location_ref, 'Unit 14');
+  // someone just physically handled it; landing straight in the "never confirmed"
+  // banner would train people to ignore the banner
+  assert.ok(b.counted_at, 'moving stock out is still a sighting');
+});
+
+test('moving stock refuses an unknown destination', async () => {
+  const store = shortStore();
+  store.db.boxes = [{ id: 'f1', hall_id: 'sc', product_id: 'G1', state: 'in_inventory' }];
+  await assert.rejects(
+    () => store.moveBoxes({ hallId: 'sc', productId: 'G1', from: 'hall', to: 'garage', qty: 1 }),
+    /Unknown location/);
+});
+
+test('moving stock leaves boxes racked for a session alone', async () => {
+  const store = shortStore();
+  store.db.boxes = [
+    { id: 'tagged', hall_id: 'sc', product_id: 'G1', state: 'in_inventory', session_tag: 'Fri PM' },
+    { id: 'free', hall_id: 'sc', product_id: 'G1', state: 'in_inventory' },
+  ];
+  await store.moveBoxes({ hallId: 'sc', productId: 'G1', from: 'hall', to: 'storage', qty: 1 });
+  assert.equal(store.db.boxes.find((b) => b.id === 'tagged').location, undefined,
+    'a box set aside for a session must not be shipped out from under Assign');
+  assert.equal(store.db.boxes.find((b) => b.id === 'free').location, 'storage');
+});
+
+test('the scanner will not open a box that is recorded off-site', () => {
+  // Reported bug: OpenBoxes guarded its manual serial field but the scanner —
+  // the primary input — went through resolveScan, which never looked at location.
+  // Scanning twice would walk a vendor box to sold_out and out of owned stock.
+  const off = [{ id: 'v', serial: 'X1', state: 'in_inventory', location: 'vendor', location_ref: 'Marathon' }];
+  const r = resolveScan('X1', { mode: 'open', boxes: off });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'offsite');
+  assert.match(r.message, /Marathon/);
+  // sold-out mode too
+  const opened = [{ id: 'v', serial: 'X2', state: 'opened', location: 'storage' }];
+  assert.equal(resolveScan('X2', { mode: 'soldout', boxes: opened }).reason, 'offsite');
+  // but a floor box still works, and receiving is exempt — receiving is what puts
+  // a box somewhere in the first place
+  assert.equal(resolveScan('X3', { mode: 'open', boxes: [{ serial: 'X3', state: 'in_inventory' }] }).ok, true);
+});
+
+test('same-day confirmation reads as today, not yesterday', () => {
+  const today = new Date(2026, 7, 18, 14, 30);
+  assert.equal(daysSinceConfirmed({ counted_at: '2026-08-18' }, today), 0);
+  assert.equal(daysSinceConfirmed({ counted_at: '2026-08-11' }, today), 7);
+  assert.equal(daysSinceConfirmed({ counted_at: null }, today), null);
+});
+
+test('an adjustment refuses rather than quietly taking off fewer than asked', async () => {
+  // It used to write off whatever the floor had and still log the full delta, so
+  // the history claimed five boxes were written off when two were. addAdjustment
+  // already refused; the two entry points must not disagree.
+  const store = shortStore();
+  store.db.boxes = [
+    { id: 'f0', hall_id: 'sc', product_id: 'G1', state: 'in_inventory' },
+    ...Array.from({ length: 5 }, (_, i) => ({ id: 'v' + i, hall_id: 'sc', product_id: 'G1',
+      state: 'in_inventory', location: 'vendor' })),
+  ];
+  await assert.rejects(
+    () => store.adjustStock({ hallId: 'sc', product: store.db.products[0], delta: -5, note: 'x' }),
+    /Only 1 on the floor/);
+  assert.equal(store.db.boxes.filter((b) => b.state === 'missing').length, 0, 'nothing written');
+  assert.equal(store.db.boxes.filter((b) => b.location === 'vendor').length, 5);
+});
+
+test('sending stock off-site takes a sealed box, not a part-sold one', async () => {
+  // the picker counts sealed stock, so the move has to take sealed stock —
+  // otherwise the half-sold box silently leaves the floor and Open Boxes
+  const store = shortStore();
+  store.db.boxes = [
+    { id: 'opened', hall_id: 'sc', product_id: 'G1', state: 'opened', received_at: '2026-01-01' },
+    { id: 'sealed', hall_id: 'sc', product_id: 'G1', state: 'in_inventory', received_at: '2026-08-01' },
+  ];
+  await store.moveBoxes({ hallId: 'sc', productId: 'G1', from: 'hall', to: 'storage', qty: 1,
+    states: ['in_inventory'] });
+  assert.equal(store.db.boxes.find((b) => b.id === 'sealed').location, 'storage');
+  assert.equal(store.db.boxes.find((b) => b.id === 'opened').location, undefined);
+});
+
+test('a box someone else already moved does not change which boxes ship', async () => {
+  // the ids path used to slice the caller's list before filtering, so one stale
+  // id shifted the selection — and the two stores disagreed about the result
+  const store = shortStore();
+  store.db.boxes = [
+    { id: 'v1', hall_id: 'sc', product_id: 'G1', state: 'in_inventory', location: 'hall' },
+    { id: 'v2', hall_id: 'sc', product_id: 'G1', state: 'in_inventory', location: 'vendor' },
+    { id: 'v3', hall_id: 'sc', product_id: 'G1', state: 'in_inventory', location: 'vendor' },
+  ];
+  const r = await store.moveBoxes({ hallId: 'sc', productId: 'G1', from: 'vendor', to: 'hall',
+    qty: 2, ids: ['v1', 'v2', 'v3'] });
+  assert.deepEqual(r.ids, ['v2', 'v3']);
+});
+
+test('a failed multi-line adjustment leaves nothing behind', async () => {
+  const store = shortStore();
+  store.db.products.push({ id: 'G9', name: 'Ghost Game', base_cost: 50, pack_units: 1, split_boxes: 1 });
+  store.db.boxes = [{ id: 'a1', hall_id: 'sc', product_id: 'G1', state: 'in_inventory' }];
+  await assert.rejects(() => store.addAdjustment({
+    hallId: 'sc', reason: 'damaged', note: 'two lines, second impossible',
+    lines: [{ product_id: 'G1', delta: -1 }, { product_id: 'G9', delta: -1 }],
+  }));
+  assert.equal(store.db.boxes[0].state, 'in_inventory', 'the first line was rolled back');
+  assert.equal((store.db.stock_adjustments || []).length, 0, 'no orphan header');
+  assert.equal((store.db.stock_adjustment_lines || []).length, 0, 'no orphan lines');
 });

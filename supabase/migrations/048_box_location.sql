@@ -60,3 +60,18 @@ commit;
 --   a $64,000 order became a $77,000 one.
 --
 -- Santa Clara after this: 1,865 on the floor, 15 off-site, 1,880 owned.
+
+-- FOLLOW-UP 2026-08-18, from an adversarial review of the change:
+--
+-- The 5 Ponies merge in 047 set state and opened_session on the three real boxes
+-- it consumed but never stamped session_id. Undo on those three sessions would
+-- not have put them back, and the session→box join read one short on 08-01 PM,
+-- 08-02 PM and 08-07. Repaired:
+--
+--   update boxes b set session_id = s.id from sessions s
+--    where b.product_id='P184' and b.session_id is null and b.state='sold_out'
+--      and s.hall_id='sc'
+--      and (s.session_date::text ||
+--           case when coalesce(s.part,'')='' then '' else ' '||s.part end) = b.opened_session;
+--
+-- Verified: 0 consumed boxes anywhere now carry an opened_session with no session_id.

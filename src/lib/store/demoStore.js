@@ -230,9 +230,18 @@ export class DemoStore {
         });
       }
     } else {
-      const pool = this.db.boxes.filter((b) => b.hall_id === hallId && b.product_id === product.id && b.state === 'in_inventory');
+      // floor only — mirrors supabaseStore. An adjustment is about stock in this
+      // hall; reaching into a distributor's boxes drains off-site and never moves
+      // the number the operator was actually correcting.
+      const pool = this.db.boxes.filter((b) => b.hall_id === hallId && b.product_id === product.id
+        && b.state === 'in_inventory' && (b.location || 'hall') === 'hall');
       pool.sort((a, b) => (a.session_tag ? 1 : 0) - (b.session_tag ? 1 : 0));   // untouched boxes first
       if (!pool.length) throw new Error('No boxes in stock to remove');
+      // mirrors supabaseStore: never under-apply and log the full delta
+      if (pool.length < n) {
+        throw new Error(`Only ${pool.length} on the floor — cannot take ${n} off.`
+          + ` Anything held off-site has to be brought in first.`);
+      }
       for (const b of pool.slice(0, n)) b.state = 'missing';
     }
     this._event('adjust', 'products', product.id, { label, note, delta, hall: hallId });
@@ -241,6 +250,21 @@ export class DemoStore {
 
   // ---- adjustments with a reason ---- (mirrors supabaseStore)
   async addAdjustment({ hallId, reason, note, lines, actor = 'demo' }) {
+    // Snapshot before touching anything. supabaseStore rolls a failed multi-line
+    // adjustment back; without this the demo left the first line's boxes written
+    // off plus an orphan header when a later line could not be covered — newly
+    // reachable now that the pool is floor-only.
+    const snapshot = JSON.stringify({
+      boxes: this.db.boxes, adj: this.db.stock_adjustments || [],
+      lines: this.db.stock_adjustment_lines || [],
+    });
+    const rollback = () => {
+      const prev = JSON.parse(snapshot);
+      this.db.boxes = prev.boxes;
+      this.db.stock_adjustments = prev.adj;
+      this.db.stock_adjustment_lines = prev.lines;
+    };
+    try {
     const clean = (lines || []).filter((l) => l.product_id && Number(l.delta));
     if (!clean.length) throw new Error('An adjustment needs at least one game and a count');
     if (!String(note || '').trim()) throw new Error('An adjustment needs a note saying why');
@@ -265,7 +289,8 @@ export class DemoStore {
           received_at: new Date().toISOString() });
       } else {
         const pool = this.db.boxes.filter((b) => b.hall_id === lineHall
-          && b.product_id === p.id && b.state === 'in_inventory');
+          && b.product_id === p.id && b.state === 'in_inventory'
+          && (b.location || 'hall') === 'hall');
         pool.sort((a, b) => (a.session_tag ? 1 : 0) - (b.session_tag ? 1 : 0));
         if (pool.length < n) throw new Error(`Only ${pool.length} ${p.name} in stock — cannot take ${n} off`);
         for (const b of pool.slice(0, n)) { b.state = 'missing'; b.adjustment_id = head.id; }
@@ -277,6 +302,7 @@ export class DemoStore {
       note: head.note, reason, hall: hallId });
     this._save();
     return head;
+    } catch (e) { rollback(); this._save(); throw e; }
   }
 
   async getAdjustments(hallId) {
@@ -519,9 +545,10 @@ export class DemoStore {
       const p = (this.db.products || []).find((x) => x.id === b.product_id);
       const g = (byProduct[b.product_id] ||= {
         product_id: b.product_id, name: p?.name || b.product_id,
-        boxes: 0, value: 0, serials: [], states: {},
+        boxes: 0, value: 0, serials: [], states: {}, offNow: 0,
       });
       g.boxes += 1;
+      if ((b.location || 'hall') !== 'hall') g.offNow += 1;
       g.value = Math.round((g.value + (Number(b.cost) || 0)) * 100) / 100;
       if (b.serial) g.serials.push(b.serial);
       g.states[b.state] = (g.states[b.state] || 0) + 1;
@@ -546,15 +573,26 @@ export class DemoStore {
 
   // ---- location ---- (demo mirror of the Supabase implementation)
 
-  async moveBoxes({ hallId, productId, from, to, qty, ref = null, note = '' }) {
+  async moveBoxes({ hallId, productId, from, to, qty, ref = null, fromRef, ids = null,
+                    states = ['in_inventory', 'opened'], note = '' }) {
     if (from === to) throw new Error('That stock is already there.');
+    if (!['hall', 'vendor', 'storage'].includes(to)) throw new Error(`Unknown location "${to}".`);
     const n = Math.max(0, parseInt(qty) || 0);
     if (!n) throw new Error('How many boxes?');
-    const pool = (this.db.boxes || []).filter((b) => b.hall_id === hallId
-      && b.product_id === productId && (b.location || 'hall') === from
-      && !b.session_id && (b.state === 'in_inventory' || b.state === 'opened'))
-      .sort((a, b) => String(a.received_at || '').localeCompare(String(b.received_at || '')))
-      .slice(0, n);
+    // mirrors supabaseStore: explicit ids win, otherwise match the location_ref
+    // too, skip session-tagged boxes, and break ties on id so which boxes move is
+    // deterministic rather than incidental
+    const pool = ids?.length
+      ? (this.db.boxes || []).filter((b) => ids.includes(b.id) && (b.location || 'hall') === from
+          && !b.session_id && states.includes(b.state)).slice(0, n)
+      : (this.db.boxes || []).filter((b) => b.hall_id === hallId
+          && b.product_id === productId && (b.location || 'hall') === from
+          && !b.session_id && !b.session_tag
+          && (fromRef === undefined || (b.location_ref ?? null) === (fromRef ?? null))
+          && states.includes(b.state))
+        .sort((a, b) => String(a.received_at || '').localeCompare(String(b.received_at || ''))
+                        || String(a.id).localeCompare(String(b.id)))
+        .slice(0, n);
     if (pool.length < n) {
       throw new Error(`Only ${pool.length} box(es) of that are ${from === 'hall' ? 'on the floor' : 'at ' + from}, `
         + `so ${n} cannot move.`);
@@ -563,12 +601,13 @@ export class DemoStore {
     for (const b of pool) {
       b.location = to;
       b.location_ref = to === 'hall' ? null : (ref || null);
-      b.counted_at = to === 'hall' ? today : null;
+      b.counted_at = today;      // any move is a physical sighting, wherever it lands
     }
     const prod = (this.db.products || []).find((p) => p.id === productId);
     this._event('stock.move', 'boxes', pool[0].id, {
       label: `${prod?.name || productId} — ${n} box(es) moved ${from} → ${to}` + (ref ? ` (${ref})` : ''),
       hall: hallId, product_id: productId, from, to, qty: n, ref, note,
+      box_ids: pool.map((b) => b.id),
     });
     this._save();
     return { moved: n, ids: pool.map((b) => b.id) };

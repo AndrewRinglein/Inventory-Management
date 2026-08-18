@@ -3,9 +3,9 @@ import { AppCtx } from '../App.jsx';
 import { fmtMoney, buildDrafts, ticketPrice } from '../lib/logic/po.js';
 import { countByProduct } from '../lib/logic/boxes.js';
 import { locationShort, shortageAdvice } from '../lib/logic/location.js';
+import { baseCost, packUnits, priceParts, splitBoxes } from '../lib/logic/pricing.js';
 import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.js';
 import { needsCost, needsType, needsTickets, needsVendor } from '../lib/logic/setup.js';
-import { priceParts, baseCost, packUnits } from '../lib/logic/pricing.js';
 import UpdateGame from './UpdateGame.jsx';
 
 const TIX_FILTERS = [
@@ -167,24 +167,38 @@ export default function Purchase() {
           NEED; if you already own it somewhere else the answer is a shipment,
           not a purchase order, and nothing else in the app will say so. */}
       {(() => {
+        // UNITS vs BOXES. orderQty is in ORDERED UNITS; cnt.off is in inventory
+        // BOXES. One unit can be a case of 16 totes, so comparing the two
+        // directly told a buyer he already owned two of the two he was ordering
+        // when in fact he owned 16 totes of the 32 he needed — talking him out
+        // of a purchase he genuinely had to make. Everything below is in boxes.
         const owned = Object.entries(orderQty)
           .filter(([pid, n]) => n > 0 && (cnt[pid]?.off || 0) > 0)
           .map(([pid, n]) => {
             const p = products.find((x) => x.id === pid);
             const c = cnt[pid] || {};
-            return { pid, name: p?.name || pid, want: n, off: c.off || 0, offBy: c.offBy || {} };
+            const per = splitBoxes(p);
+            const wantBoxes = n * per;
+            // and a SHORTAGE is what the floor cannot already cover. Feeding the
+            // gross order quantity in told a hall with 50 on the shelf topping up
+            // by 3 that it was "short 3" and should ship rather than buy.
+            const shortBoxes = Math.max(0, wantBoxes - ((c.inv || 0) + (c.open || 0)));
+            return { pid, name: p?.name || pid, units: n, per, wantBoxes, shortBoxes,
+                     off: c.off || 0, offBy: c.offBy || {} };
           });
-        if (!owned.length) return null;
+        const relevant = owned.filter((o) => o.shortBoxes > 0);
+        if (!relevant.length) return null;
         return (
           <div className="card pad" style={{ marginBottom: 12, background: '#eef7f6', border: '1px solid #9ec9c4' }}>
             <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>
-              You already own {owned.reduce((a, o) => a + Math.min(o.want, o.off), 0)} box(es) of what you're ordering
+              You already own {relevant.reduce((a, o) => a + Math.min(o.shortBoxes, o.off), 0)} box(es) of what you're short
             </div>
-            {owned.map((o) => (
+            {relevant.map((o) => (
               <div key={o.pid} style={{ fontSize: 12.5, marginTop: 2 }}>
-                <b>{o.name}</b> — ordering {o.want}, and {o.off} already ours
+                <b>{o.name}</b> — ordering {o.units} unit{o.units === 1 ? '' : 's'}
+                {o.per > 1 ? ` (${o.wantBoxes} boxes)` : ''}, and {o.off} already ours
                 ({Object.entries(o.offBy).map(([k, v]) => `${v} ${locationShort(k)}`).join(', ')}).
-                {' '}{shortageAdvice(o.want, o.off)}
+                {' '}{shortageAdvice(o.shortBoxes, o.off)}
               </div>
             ))}
           </div>

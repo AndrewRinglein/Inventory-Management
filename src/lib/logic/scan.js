@@ -7,6 +7,8 @@
 // whatever input has focus — we ignore bursts when a text field is focused
 // UNLESS the field opts in with data-scan-target.
 
+import { isFloor, locationLabel } from './location.js';
+
 const BURST_MS = 45;
 const MIN_LEN = 4;
 
@@ -49,6 +51,24 @@ export function resolveScan(code, ctx) {
   const matches = boxes.filter((b) => b.serial && b.serial === code);
   if (!matches.length) return { ok: false, reason: 'unknown', message: `Code "${code}" not recognized.` };
 
+  // A box the system believes is at a distributor or in storage cannot be opened
+  // or sold out on a floor it is not on. If the serial is physically in someone's
+  // hand then the RECORD is what's wrong, and the honest response is to say so
+  // rather than quietly transitioning it — an off-site box walked to sold_out
+  // stops being counted as owned and leaves inventory with no trace of why.
+  // Receiving is exempt: receiving is what puts a box somewhere in the first place.
+  if (mode !== 'receive') {
+    const here = matches.filter(isFloor);
+    if (!here.length) {
+      const b = matches[0];
+      return { ok: false, reason: 'offsite', box: b,
+        message: `That box is recorded as ${locationLabel(b.location)}`
+          + `${b.location_ref ? ' · ' + b.location_ref : ''}, not on the floor. `
+          + `Bring it in from Owned Inventory first.` };
+    }
+    return resolveOnFloor(code, { ...ctx, boxes: here });
+  }
+
   if (mode === 'receive') {
     const onOrder = matches.find((b) => b.state === 'on_order' && (!poId || b.po_id === poId));
     if (onOrder) return { ok: true, action: 'receive', box: onOrder };
@@ -57,6 +77,13 @@ export function resolveScan(code, ctx) {
     return { ok: false, reason: 'wrong_po', box: matches[0], message: 'That box belongs to a different order.' };
   }
 
+  return resolveOnFloor(code, ctx);
+}
+
+/** The open / sold-out paths, once the box is known to be on the floor. */
+function resolveOnFloor(code, ctx) {
+  const { mode, boxes } = ctx;
+  const matches = boxes.filter((b) => b.serial && b.serial === code);
   if (mode === 'open') {
     const inInv = matches.find((b) => b.state === 'in_inventory');
     if (inInv) return { ok: true, action: 'open', box: inInv };

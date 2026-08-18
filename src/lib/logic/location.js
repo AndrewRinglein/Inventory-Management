@@ -79,8 +79,15 @@ export function shortageAdvice(need, offsite, where) {
 /** How stale an off-site confirmation is, in days. Null when never confirmed. */
 export function daysSinceConfirmed(box, today = new Date()) {
   if (!box?.counted_at) return null;
-  const then = new Date(box.counted_at);
-  return Math.max(0, Math.round((today - then) / 86400000));
+  // counted_at is a plain calendar date. `new Date('2026-08-18')` parses as UTC
+  // midnight, so comparing it to a local clock made a confirmation made this
+  // morning read as "1 day ago" and the "today" branch unreachable. Compare
+  // calendar days in local time instead.
+  const [y, m, d] = String(box.counted_at).slice(0, 10).split('-').map(Number);
+  if (!y || !m || !d) return null;
+  const then = new Date(y, m - 1, d);
+  const now = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  return Math.max(0, Math.round((now - then) / 86400000));
 }
 
 // Stock nobody looks at is stock that quietly disappears, and off-site stock is

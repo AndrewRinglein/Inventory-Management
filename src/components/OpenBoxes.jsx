@@ -9,7 +9,10 @@ export default function OpenBoxes() {
   const editable = can('boxes');
 
   const opened = useMemo(
-    () => boxes.filter((b) => b.state === 'opened')
+    // on the floor: the heading says "open on the floor" and the rows carry
+    // Sold out / Back to stock buttons, neither of which means anything for a
+    // box sitting in a distributor's warehouse
+    () => boxes.filter((b) => b.state === 'opened' && isFloor(b))
       .sort((a, b) => (b.opened_at || '').localeCompare(a.opened_at || '')),
     [boxes]);
 
@@ -31,8 +34,12 @@ export default function OpenBoxes() {
     if (!editable) { setToast('Read-only for your role'); return; }
     const code = lookup.trim();
     if (!code) return;
-    const b = boxes.find((x) => x.serial === code);
-    if (!b) { setToast(`Serial "${code}" not found in this hall`); return; }
+    // prefer a floor box when a serial appears on more than one, exactly as
+    // resolveScan does — otherwise this field and the scanner disagree about the
+    // same code, which is the sort of divergence nobody ever debugs
+    const hits = boxes.filter((x) => x.serial === code);
+    if (!hits.length) { setToast(`Serial "${code}" not found in this hall`); return; }
+    const b = hits.find(isFloor) || hits[0];
     // scanning a serial that belongs to off-site stock means the box is not where
     // the system thinks it is — say so rather than opening it on a floor it isn't on
     if (!isFloor(b)) {

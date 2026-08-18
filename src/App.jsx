@@ -204,6 +204,9 @@ export default function App() {
           await store.transitionBox(b.id, 'sold_out');
           setToast(`Sold out — ${pname}`, async () => { await store.transitionBox(b.id, 'opened'); await reloadHall(); });
         } else if (res.action === 'receive') {
+          // receiving is what puts a box somewhere — land it on the floor, so a
+          // row that somehow carried an off-site location cannot arrive invisible
+          await store.updateBox(b.id, { location: 'hall', location_ref: null });
           await store.transitionBox(b.id, 'in_inventory');
           setToast(`Received — ${pname}`, async () => { await store.transitionBox(b.id, 'on_order'); await reloadHall(); });
         }

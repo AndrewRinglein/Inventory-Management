@@ -234,6 +234,7 @@ export default function History() {
                                     already played reads very differently from one sitting
                                     untouched on the shelf */}
                                 {Object.entries(l.states).map(([s, n]) => `${n} ${s.replace('_', ' ')}`).join(', ')}
+                                {l.offNow > 0 && ` · ${l.offNow} now off-site`}
                               </td>
                             </tr>
                           ))}
