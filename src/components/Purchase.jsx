@@ -209,6 +209,10 @@ export default function Purchase() {
         <table className="tbl">
           <thead><tr>
             <th className="first sortable" onClick={() => sortBy('name')}>Game{arrow('name')}</th>
+            <th className="r sortable" style={{ width: 84 }} onClick={() => sortBy('live')}
+                title="On the floor at this hall — what can actually be played. Never includes stock held off-site.">Available{arrow('live')}</th>
+            <th style={{ textAlign: 'center', width: 96 }}>Units</th>
+            <th className="r" style={{ width: 118 }}>Line total</th>
             <th className="r sortable" style={{ width: 92 }} onClick={() => sortBy('tickets')}>Tickets{arrow('tickets')}</th>
             <th className="r sortable" style={{ width: 74 }} onClick={() => sortBy('price')}>$ / tkt{arrow('price')}</th>
             <th className="sortable" style={{ width: 150 }} onClick={() => sortBy('vendor')}>Vendor{arrow('vendor')}</th>
@@ -217,11 +221,7 @@ export default function Purchase() {
             <th className="r sortable" style={{ width: 62 }} onClick={() => sortBy('units')} title="Deals inside one ordered unit — what the base price is quoted against">Deals{arrow('units')}</th>
             <th className="r sortable" style={{ width: 86 }} onClick={() => sortBy('packing')} title="Packing on one ordered unit">Packing{arrow('packing')}</th>
             <th className="r sortable" style={{ width: 106 }} onClick={() => sortBy('cost')} title="Base × deals + packing">Unit total{arrow('cost')}</th>
-            <th className="r sortable" style={{ width: 66 }} onClick={() => sortBy('live')}
-                title="On the floor at this hall — what can actually be played. Never includes stock held off-site.">Live{arrow('live')}</th>
-            <th className="r sortable" style={{ width: 78 }} onClick={() => sortBy('onorder')}>On order{arrow('onorder')}</th>
-            <th style={{ textAlign: 'center', width: 96 }}>Units</th>
-            <th className="r last" style={{ width: 118 }}>Line total</th>
+            <th className="r last sortable" style={{ width: 78 }} onClick={() => sortBy('onorder')}>On order{arrow('onorder')}</th>
           </tr></thead>
           <tbody>
             {rows.map((p) => {
@@ -231,6 +231,25 @@ export default function Purchase() {
               return (
                 <tr key={p.id} className={n ? 'hl' : ''}>
                   <td className="first">{p.name}</td>
+                  <td className="r mono">{(c.inv || 0) + (c.open || 0)}</td>
+                  <td style={{ textAlign: 'center' }}>
+                    {needsVendor(p)
+                      ? <button className="badge b-gold" style={{ border: 0, cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: 600 }}
+                          title="We don't know who supplies this yet, so there's nobody to send the order to. Click to set the distributor."
+                          onClick={() => setUpdPid(p.id)}>needs distributor</button>
+                      : <>
+                          <input className={'qty' + (needsCost(p) ? ' tbd-qty' : '')} type="number" min="0" value={n || ''} placeholder="" disabled={!editable}
+                            title={needsCost(p) ? "You can order this — the PO will show ? and ask the vendor for their price" : ''}
+                            onChange={(e) => setQty(p.id, e.target.value)} />
+                          {pp.splits && n > 0 && <div className="dimmer" style={{ fontSize: 10.5 }}>= {n * pp.split} boxes</div>}
+                        </>}
+                  </td>
+                  <td className="r mono">
+                    {n ? (needsCost(p) ? <span className="tbd">?</span> : <>
+                      <b>{fmtMoney(n * pp.allIn)}</b>
+                      {pp.packing > 0 && <div className="dimmer" style={{ fontSize: 10.5 }}>incl. {fmtMoney(n * pp.packing)} packing</div>}
+                    </>) : ''}
+                  </td>
                   <td className="r mono">{needsTickets(p) ? <Upd p={p} /> : (p.tickets ? p.tickets.toLocaleString() : '—')}</td>
                   <td className="r mono dim">${ticketPrice(p)}</td>
                   <td className="dim" style={{ fontSize: 12 }}>
@@ -249,26 +268,7 @@ export default function Purchase() {
                     {needsCost(p) ? <span className="dimmer">—</span> : <b>{fmtMoney(pp.allIn)}</b>}
                     {pp.splits && <div className="dimmer" style={{ fontSize: 10.5 }}>→ {pp.split} boxes @ {fmtMoney(pp.perBox)}</div>}
                   </td>
-                  <td className="r mono">{(c.inv || 0) + (c.open || 0)}</td>
-                  <td className="r mono dimmer">{c.onorder || 0}</td>
-                  <td style={{ textAlign: 'center' }}>
-                    {needsVendor(p)
-                      ? <button className="badge b-gold" style={{ border: 0, cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: 600 }}
-                          title="We don't know who supplies this yet, so there's nobody to send the order to. Click to set the distributor."
-                          onClick={() => setUpdPid(p.id)}>needs distributor</button>
-                      : <>
-                          <input className={'qty' + (needsCost(p) ? ' tbd-qty' : '')} type="number" min="0" value={n || ''} placeholder="" disabled={!editable}
-                            title={needsCost(p) ? "You can order this — the PO will show ? and ask the vendor for their price" : ''}
-                            onChange={(e) => setQty(p.id, e.target.value)} />
-                          {pp.splits && n > 0 && <div className="dimmer" style={{ fontSize: 10.5 }}>= {n * pp.split} boxes</div>}
-                        </>}
-                  </td>
-                  <td className="r mono last">
-                    {n ? (needsCost(p) ? <span className="tbd">?</span> : <>
-                      <b>{fmtMoney(n * pp.allIn)}</b>
-                      {pp.packing > 0 && <div className="dimmer" style={{ fontSize: 10.5 }}>incl. {fmtMoney(n * pp.packing)} packing</div>}
-                    </>) : ''}
-                  </td>
+                  <td className="r mono dimmer last">{c.onorder || 0}</td>
                 </tr>
               );
             })}

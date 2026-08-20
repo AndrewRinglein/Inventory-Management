@@ -102,4 +102,58 @@ for (const [name, Comp] of Object.entries(SCREENS)) {
   }
 }
 console.log(failed ? `\n${failed} screen(s) failed to render` : '\nall screens render');
-process.exit(failed ? 1 : 0);
+
+// ---------------------------------------------------------------- column order
+//
+// Managers were losing the row between the game name and the number they needed,
+// because several games have near-identical names and the count sat far to the
+// right. The count now sits immediately after the name, and on Purchase the order
+// box sits immediately after that. This is a deliberate layout, so it is pinned:
+// a future edit that reorders the header without reordering the cells (or vice
+// versa) breaks here rather than silently printing every number one column off.
+
+const headersOf = (html) => {
+  const head = html.match(/<thead[^>]*>([\s\S]*?)<\/thead>/);
+  if (!head) return [];
+  return [...head[1].matchAll(/<th[^>]*>([\s\S]*?)<\/th>/g)]
+    .map((m) => m[1].replace(/<[^>]*>/g, ' ').replace(/&#x27;/g, "'").replace(/&amp;/g, '&')
+                    .replace(/[↑↓]/g, '').replace(/\s+/g, ' ').trim());
+};
+const firstRowCells = (html) => {
+  const body = html.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/);
+  if (!body) return 0;
+  const row = body[1].match(/<tr[^>]*>([\s\S]*?)<\/tr>/);
+  if (!row) return 0;
+  // top-level <td> only — nested tables would confuse a naive count, and there are none
+  return (row[1].match(/<td/g) || []).length;
+};
+
+const LAYOUTS = [
+  { name: 'Purchase',  Comp: Purchase,  lead: ['Game', 'Available', 'Units', 'Line total'] },
+  { name: 'Inventory', Comp: Inventory, lead: ['Game', 'Available', 'Counted as'] },
+];
+
+let layoutFailed = 0;
+console.log('');
+for (const { name, Comp, lead } of LAYOUTS) {
+  const html = renderToString(<AppCtx.Provider value={ctx}><Comp /></AppCtx.Provider>);
+  const th = headersOf(html);
+  // Inventory's Game header carries a search box, so compare on the leading word only
+  const norm = (h, want) => (h.startsWith(want) ? want : h);
+  const ok = lead.every((want, i) => norm(th[i] || '', want) === want);
+  if (!ok) {
+    layoutFailed++;
+    console.log(`  FAIL  ${name} columns: wanted ${lead.join(' | ')}, got ${th.slice(0, lead.length).join(' | ')}`);
+  } else {
+    console.log(`  ok    ${name} leads with ${lead.join(' | ')}`);
+  }
+  const nTd = firstRowCells(html);
+  if (nTd && nTd !== th.length) {
+    layoutFailed++;
+    console.log(`  FAIL  ${name}: ${th.length} headers but ${nTd} cells in the first row — a column is off by one`);
+  } else if (nTd) {
+    console.log(`  ok    ${name} header and cells line up (${nTd} columns)`);
+  }
+}
+
+process.exit(failed + layoutFailed ? 1 : 0);

@@ -11,12 +11,15 @@ import { priceParts, perBoxValue, stockUnit, unitLabel } from '../lib/logic/pric
 import UpdateGame from './UpdateGame.jsx';
 import { isFloor } from '../lib/logic/location.js';
 
+// Available sits immediately after the name, and its unit label right beside it.
+// Managers were losing the row while tracking across to the count — several games
+// have near-identical names, so a long horizontal scan was picking up the wrong line.
 const COLS = [
+  { key: 'inv', label: 'Available', r: true }, { key: 'unit', label: 'Counted as' },
+  { key: 'open', label: 'Opened', r: true }, { key: 'onorder', label: 'On order', r: true },
   { key: 'vendor', label: 'Vendor' }, { key: 'type', label: 'Type' },
   { key: 'tickets', label: 'Tickets', r: true }, { key: 'price', label: '$ / ticket', r: true },
-  { key: 'cost', label: 'Per unit', r: true }, { key: 'inv', label: 'Available', r: true },
-  { key: 'unit', label: 'Counted as' },
-  { key: 'open', label: 'Opened', r: true }, { key: 'onorder', label: 'On order', r: true },
+  { key: 'cost', label: 'Per unit', r: true },
   { key: 'value', label: 'Value', r: true }, { key: 'assigned', label: 'Set aside' },
 ];
 
@@ -175,7 +178,7 @@ export default function Inventory() {
       </div>
       {adjustMode && (
         <div className="demo-banner" style={{ background: '#fdf3e7', borderColor: '#e2c39a' }}>
-          <b>Adjust mode is on.</b> Click any <b>In stock</b> number to set what's actually on the shelf.
+          <b>Adjust mode is on.</b> Click any <b>Available</b> number — the one next to the game name — to set what's actually on the shelf.
           Every change needs a note and shows up in Recent Activity.
         </div>
       )}
@@ -199,27 +202,6 @@ export default function Inventory() {
                   {r.p.name}
                   {needsCost(r.p) && <span className="badge b-gold" style={{ marginLeft: 6 }} title="No unit cost — can't be ordered or received until set">can't order</span>}
                 </td>
-                <td className="dim" style={{ fontSize: 12 }}>
-                  {needsVendor(r.p) ? <Upd p={r.p} /> : vmap[r.p.vendor_id]?.name}
-                </td>
-                <td className="dimmer" style={{ fontSize: 12 }}>{needsType(r.p) ? <Upd p={r.p} /> : r.p.type}</td>
-                <td className="r mono">{needsTickets(r.p) ? <Upd p={r.p} /> : (r.p.tickets ? r.p.tickets.toLocaleString() : '—')}</td>
-                <td className="r mono dim">${ticketPrice(r.p)}</td>
-                <td className="r mono">
-                  {needsCost(r.p) ? <Upd p={r.p} /> : (() => {
-                    const pp = priceParts(r.p, vmap[r.p.vendor_id]);
-                    return <span title={`${fmtMoney(pp.base)} per deal × ${pp.units} deal${pp.units === 1 ? '' : 's'} = ${fmtMoney(pp.box)} per ordered unit`
-                      + (pp.splits ? `, arriving as ${pp.split} ${pp.unit[1]} at ${fmtMoney(pp.perBox)} each` : '')
-                      + (pp.packing ? `. Packing of ${fmtMoney(pp.packing)} is billed on the PO but not carried in stock value.` : '')}>
-                      {fmtMoney(pp.perBox)}
-                      {(pp.multiplied || pp.splits) && (
-                        <div className="dimmer" style={{ fontSize: 10.5 }}>
-                          {pp.splits ? `${fmtMoney(pp.box)} ÷ ${pp.split}` : `${fmtMoney(pp.base)} ×${pp.units}`}
-                        </div>
-                      )}
-                    </span>;
-                  })()}
-                </td>
                 <td className="r mono">
                   {adjustMode
                     ? <button className="btn ghost sm" style={{ fontFamily: 'inherit', minWidth: 46 }}
@@ -241,6 +223,27 @@ export default function Inventory() {
                 </td>
                 <td className="r mono" style={{ color: 'var(--orange)' }}>{r.c.open || 0}</td>
                 <td className="r mono dimmer">{r.c.onorder || 0}</td>
+                <td className="dim" style={{ fontSize: 12 }}>
+                  {needsVendor(r.p) ? <Upd p={r.p} /> : vmap[r.p.vendor_id]?.name}
+                </td>
+                <td className="dimmer" style={{ fontSize: 12 }}>{needsType(r.p) ? <Upd p={r.p} /> : r.p.type}</td>
+                <td className="r mono">{needsTickets(r.p) ? <Upd p={r.p} /> : (r.p.tickets ? r.p.tickets.toLocaleString() : '—')}</td>
+                <td className="r mono dim">${ticketPrice(r.p)}</td>
+                <td className="r mono">
+                  {needsCost(r.p) ? <Upd p={r.p} /> : (() => {
+                    const pp = priceParts(r.p, vmap[r.p.vendor_id]);
+                    return <span title={`${fmtMoney(pp.base)} per deal × ${pp.units} deal${pp.units === 1 ? '' : 's'} = ${fmtMoney(pp.box)} per ordered unit`
+                      + (pp.splits ? `, arriving as ${pp.split} ${pp.unit[1]} at ${fmtMoney(pp.perBox)} each` : '')
+                      + (pp.packing ? `. Packing of ${fmtMoney(pp.packing)} is billed on the PO but not carried in stock value.` : '')}>
+                      {fmtMoney(pp.perBox)}
+                      {(pp.multiplied || pp.splits) && (
+                        <div className="dimmer" style={{ fontSize: 10.5 }}>
+                          {pp.splits ? `${fmtMoney(pp.box)} ÷ ${pp.split}` : `${fmtMoney(pp.base)} ×${pp.units}`}
+                        </div>
+                      )}
+                    </span>;
+                  })()}
+                </td>
                 <td className="r mono">{r.value ? fmtMoney(r.value) : '—'}</td>
                 <td style={{ fontSize: 11, color: 'var(--green)' }}>{r.assignedLabel}</td>
                 <td className="last r" style={{ whiteSpace: 'nowrap' }}>
