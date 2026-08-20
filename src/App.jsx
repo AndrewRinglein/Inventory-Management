@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { store, IS_DEMO, IS_SANDBOX } from './lib/store/index.js';
 import { roleFromUrl, roleLink, can as roleCan, ROLES } from './lib/roles.js';
+import { hiddenSet } from './lib/logic/hidden.js';
 import { createScanCapture, resolveScan, beep } from './lib/logic/scan.js';
 import { suggestSession } from './lib/sessions.js';
 import Login from './components/Login.jsx';
@@ -38,8 +39,17 @@ export default function App() {
   const [allPos, setPos] = useState([]);
   // archived orders drop out of every working view — Open Orders' Archive tab reads allPos
   const pos = useMemo(() => allPos.filter((p) => !p.archived_at), [allPos]);
+  // One Set, rebuilt only when the list changes. It has to be memoised and it has
+  // to live above the early returns below: screens key useMemos on it, so a fresh
+  // Set every render would re-walk the 456-game catalogue on every toast tick.
+  const hidden = useMemo(() => hiddenSet(hiddenIds), [hiddenIds]);
   const [payments, setPayments] = useState([]);
   const [orderQty, setOrderQtyState] = useState({});
+  // product ids this hall has put away. Reloads with the hall, because it IS per-hall.
+  const [hiddenIds, setHiddenIds] = useState([]);
+  // read inside async callbacks that must not act on a hall the user has left
+  const hallRef = useRef(hall);
+  useEffect(() => { hallRef.current = hall; }, [hall]);
   const [settings, setSettings] = useState({});
 
   // ui
@@ -69,10 +79,29 @@ export default function App() {
   }, []);
 
   const reloadHall = useCallback(async (h = hall) => {
-    const [bx, ps, pay, oq] = await Promise.all([
+    const [bx, ps, pay, oq, hid] = await Promise.all([
       store.getBoxes(h), store.getPos(h), store.getPayments(h), store.getOrderQty(h),
+      store.getHidden(h),
     ]);
-    setBoxes(bx); setPos(ps); setPayments(pay); setOrderQtyState(oq);
+    setBoxes(bx); setPos(ps); setPayments(pay); setOrderQtyState(oq); setHiddenIds(hid);
+  }, [hall]);
+
+  // Hide or unhide a game at the CURRENT hall. Display only — no box is touched.
+  //
+  // The hall is captured when the call starts and checked again when it finishes.
+  // Without that, two sequences corrupt the other hall's list: hiding at SC and
+  // switching to RWC before the request lands appends SC's game to RWC's state,
+  // and an undo toast (which lives ten seconds, easily long enough to change hall)
+  // correctly unhides at SC in the database while stripping the id from whatever
+  // hall is on screen. The write is always addressed to the right hall either way;
+  // it is only the local copy that can end up describing the wrong one.
+  const toggleHidden = useCallback(async (productId, hide, note = null) => {
+    const forHall = hall;
+    await store.setHidden(forHall, productId, hide, note);
+    if (hallRef.current !== forHall) return;   // moved on — the next reload is the truth
+    setHiddenIds((prev) => (hide
+      ? (prev.includes(productId) ? prev : [...prev, productId])
+      : prev.filter((id) => id !== productId)));
   }, [hall]);
 
   const reloadCatalog = useCallback(async () => {
@@ -231,6 +260,7 @@ export default function App() {
     store, IS_DEMO, IS_SANDBOX, hall, setHall, screen, setScreen,
     role, roleLabel: ROLES[role].label, roleHome, can: canDo, readOnlyHall,
     vendors, products, boxes, pos, allPos, payments, orderQty, settings,
+    hidden, toggleHidden,
     reloadHall, reloadCatalog, reloadSettings,
     setToast, requirePin, scanMode, setScanMode, openSession, setOpenSession,
     receivingPo, setReceivingPo, productName, receivingScanRef,

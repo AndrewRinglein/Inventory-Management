@@ -6,6 +6,7 @@ import { locationShort, shortageAdvice } from '../lib/logic/location.js';
 import { baseCost, packUnits, priceParts, splitBoxes } from '../lib/logic/pricing.js';
 import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.js';
 import { needsCost, needsType, needsTickets, needsVendor } from '../lib/logic/setup.js';
+import { isHidden } from '../lib/logic/hidden.js';
 import UpdateGame from './UpdateGame.jsx';
 
 const TIX_FILTERS = [
@@ -46,7 +47,8 @@ const sortVal = (p, k, cnt) => {
 };
 
 export default function Purchase() {
-  const { hall, products, vendors, boxes, orderQty, store, reloadHall, setScreen, setToast, can } = useContext(AppCtx);
+  const { hall, products, vendors, boxes, orderQty, store, reloadHall, setScreen, setToast, can,
+          hidden, toggleHidden } = useContext(AppCtx);
   const editable = can('order');
   const [vendorF, setVendorF] = useState('');
   const [q, setQ] = useState('');
@@ -58,6 +60,7 @@ export default function Purchase() {
   const [sortKey, setSortKey] = useState('name');
   const [dir, setDir] = useState(1);
   const [updPid, setUpdPid] = useState(null);
+  const [showHidden, setShowHidden] = useState(false);
 
   const cnt = useMemo(() => countByProduct(boxes), [boxes]);
   const vmap = useMemo(() => Object.fromEntries(vendors.map((v) => [v.id, v])), [vendors]);
@@ -78,6 +81,11 @@ export default function Purchase() {
 
   const rows = products
     .filter((p) => p.active !== false)
+    // A game this hall has put away is not orderable here. The order quantity
+    // check below still wins, deliberately: if a line somehow already carries a
+    // quantity, the row has to stay reachable so it can be set back to zero.
+    // Hiding must never strand a number on an order nobody can see.
+    .filter((p) => showHidden || (orderQty[p.id] || 0) > 0 || !isHidden(hidden, p.id))
     .filter((p) => (orderQty[p.id] || 0) > 0 || (   // anything already on the order always shows
       (!vendorF || p.vendor_id === vendorF) &&
       (!q || p.name.toLowerCase().includes(q.toLowerCase())) &&
@@ -92,11 +100,41 @@ export default function Purchase() {
       return d * dir || a.name.localeCompare(b.name);
     });
 
+  // Games this hall has put away. Counted as "not currently on show" rather than
+  // "hidden", because one carrying an order quantity is deliberately still in the
+  // table — saying "1 hidden here" while that one game sits visible on screen is
+  // the sort of small lie that makes people stop trusting the number.
+  const hiddenHere = products.filter((p) => p.active !== false
+    && isHidden(hidden, p.id) && !(orderQty[p.id] || 0)).length;
+
   const sortBy = (k) => { if (k === sortKey) setDir(-dir); else { setSortKey(k); setDir(1); } };
   const arrow = (k) => (k === sortKey ? (dir > 0 ? ' ▲' : ' ▼') : '');
   const anyFilter = !!(vendorF || typeF || tixF || priceF || stockF || q || miscF !== 'games');
   const clearFilters = () => {
     setVendorF(''); setTypeF(''); setTixF(''); setPriceF(''); setStockF(''); setQ(''); setMiscF('games');
+  };
+
+  /**
+   * Put a game away for this hall, or bring it back.
+   *
+   * This control exists here as well as on Inventory because Inventory only lists
+   * games that HAVE stock. The games that most need putting away are the ones this
+   * hall has never carried — 173 are stocked only at Santa Clara, 63 only at
+   * Redwood City — and none of those has a row on Inventory to press.
+   *
+   * No confirm dialog here, unlike Inventory: a game with stock on the floor is
+   * exactly the case Inventory handles, and this screen is where you are looking at
+   * catalogue noise. The toast undo covers a misclick either way.
+   */
+  const setHidden = async (p, hide) => {
+    try {
+      await toggleHidden(p.id, hide);
+      setToast(hide ? `${p.name} hidden at ${hall === 'sc' ? 'Santa Clara' : 'Redwood City'}`
+                    : `${p.name} is orderable again`,
+        () => toggleHidden(p.id, !hide));
+    } catch (e) {
+      setToast(e.message || 'Could not change that');
+    }
   };
 
   const setQty = async (pid, v) => {
@@ -160,6 +198,14 @@ export default function Purchase() {
           </select></label>
         <div style={{ flex: 1 }} />
         <span className="dimmer" style={{ fontSize: 12 }}>{rows.length} shown</span>
+        {(hiddenHere > 0 || showHidden) && (
+          <button className={'btn sm ' + (showHidden ? 'orange' : 'ghost')} onClick={() => setShowHidden(!showHidden)}
+            title={showHidden
+              ? 'Go back to just the games this hall orders'
+              : 'Games this hall has put away are not orderable here. Show them to bring one back.'}>
+            {showHidden ? 'Hide them again' : `${hiddenHere} hidden here`}
+          </button>
+        )}
         {anyFilter && <button className="btn ghost sm" onClick={clearFilters}>Clear</button>}
       </div>
 
@@ -221,7 +267,8 @@ export default function Purchase() {
             <th className="r sortable" style={{ width: 62 }} onClick={() => sortBy('units')} title="Deals inside one ordered unit — what the base price is quoted against">Deals{arrow('units')}</th>
             <th className="r sortable" style={{ width: 86 }} onClick={() => sortBy('packing')} title="Packing on one ordered unit">Packing{arrow('packing')}</th>
             <th className="r sortable" style={{ width: 106 }} onClick={() => sortBy('cost')} title="Base × deals + packing">Unit total{arrow('cost')}</th>
-            <th className="r last sortable" style={{ width: 78 }} onClick={() => sortBy('onorder')}>On order{arrow('onorder')}</th>
+            <th className="r sortable" style={{ width: 78 }} onClick={() => sortBy('onorder')}>On order{arrow('onorder')}</th>
+            <th className="last" style={{ width: 62 }} />
           </tr></thead>
           <tbody>
             {rows.map((p) => {
@@ -230,7 +277,15 @@ export default function Purchase() {
               const pp = priceParts(p, vmap[p.vendor_id]);
               return (
                 <tr key={p.id} className={n ? 'hl' : ''}>
-                  <td className="first">{p.name}</td>
+                  <td className="first">
+                    {p.name}
+                    {isHidden(hidden, p.id) && (
+                      <span className="badge b-gold" style={{ marginLeft: 6, fontSize: 10.5 }}
+                        title="This game is hidden at this hall but still has a quantity on the order. Set it to 0, or unhide it on Inventory.">
+                        hidden — still on the order
+                      </span>
+                    )}
+                  </td>
                   <td className="r mono">{(c.inv || 0) + (c.open || 0)}</td>
                   <td style={{ textAlign: 'center' }}>
                     {needsVendor(p)
@@ -268,7 +323,15 @@ export default function Purchase() {
                     {needsCost(p) ? <span className="dimmer">—</span> : <b>{fmtMoney(pp.allIn)}</b>}
                     {pp.splits && <div className="dimmer" style={{ fontSize: 10.5 }}>→ {pp.split} boxes @ {fmtMoney(pp.perBox)}</div>}
                   </td>
-                  <td className="r mono dimmer last">{c.onorder || 0}</td>
+                  <td className="r mono dimmer">{c.onorder || 0}</td>
+                  <td className="last r" style={{ whiteSpace: 'nowrap' }}>
+                    {editable && (isHidden(hidden, p.id)
+                      ? <button className="btn ghost sm" title="Order this game at this hall again"
+                          onClick={() => setHidden(p, false)}>Unhide</button>
+                      : <button className="btn ghost sm"
+                          title="Put this game away for this hall only — it stops appearing here and on Inventory. Nothing is deleted."
+                          onClick={() => setHidden(p, true)}>Hide</button>)}
+                  </td>
                 </tr>
               );
             })}

@@ -645,6 +645,41 @@ export class DemoStore {
     return { confirmed: ids.length };
   }
 
+  // ---- hidden games: mirrors SupabaseStore.getHidden / setHidden exactly ----
+
+  async getHidden(hallId) {
+    return (this.db.hidden || [])
+      .filter((r) => r.hall_id === hallId)
+      .map((r) => r.product_id);
+  }
+
+  async setHidden(hallId, productId, hide, note = null) {
+    if (!hallId || !productId) throw new Error('setHidden needs a hall and a product');
+    const prod = (this.db.products || []).find((p) => p.id === productId);
+    if (!prod) throw new Error(`No such game: ${productId}`);
+    this.db.hidden ||= [];
+    const at = (r) => r.hall_id === hallId && r.product_id === productId;
+    if (hide) {
+      const existing = this.db.hidden.find(at);
+      if (!existing) {
+        this.db.hidden.push({
+          hall_id: hallId, product_id: productId, note,
+          hidden_at: new Date().toISOString(),
+        });
+      } else if (note != null) {
+        existing.note = note;      // mirrors the upsert: only overwrite when given one
+      }
+    } else {
+      this.db.hidden = this.db.hidden.filter((r) => !at(r));
+    }
+    this._event(hide ? 'catalog.hide' : 'catalog.unhide', 'products', productId, {
+      label: `${prod.name} ${hide ? 'hidden at' : 'shown again at'} ${hallId.toUpperCase()}`,
+      hall: hallId, product_id: productId, note,
+    });
+    this._save();
+    return { product_id: productId, hidden: !!hide };
+  }
+
   // ---- payments ----
   async getPayments(hallId) { return this.db.payments.filter((p) => p.hall_id === hallId); }
   async addPayment(p) {
@@ -814,7 +849,7 @@ function seed() {
     })),
     order_qty: { sc: {}, rwc: {} },
     purchase_orders: [], po_lines: [], shipments: [], boxes: [],
-    payments: [], emails: [], events: [], photos: {},
+    payments: [], emails: [], events: [], photos: {}, hidden: [],
     settings: {
       email: { testMode: true, testAddress: '', fromAddress: '', accountingAddress: '' },
       po_sequence: {},

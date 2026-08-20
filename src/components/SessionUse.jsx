@@ -1,5 +1,6 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
+import { isHidden, hiddenLast } from '../lib/logic/hidden.js';
 import { countByProduct } from '../lib/logic/boxes.js';
 import { stockUnit } from '../lib/logic/pricing.js';
 
@@ -15,7 +16,7 @@ function sessionLabel(s) {
 }
 
 export default function SessionUse() {
-  const { hall, products, boxes, store, reloadHall, setToast, requirePin, can } = useContext(AppCtx);
+  const { hall, products, boxes, store, reloadHall, setToast, requirePin, can, hidden } = useContext(AppCtx);
   const [sessions, setSessions] = useState(null);
   const [plays, setPlays] = useState([]);
   const [open, setOpen] = useState(null);     // session id drilled into
@@ -320,11 +321,23 @@ export default function SessionUse() {
       {/* ---- pick the game a line means ---- */}
       {assign && (() => {
         const term = q.trim().toLowerCase();
-        const list = products
+        // Games this hall has put away sink to the bottom, and say why.
+        //
+        // This picker is where duplicated names actually get resolved by a
+        // person, so it is where hiding earns its keep: Red White & Blue is
+        // three records and the halls buy different ones. Sorting the hall's
+        // own games first means the obvious click is the right one.
+        //
+        // They stay pickable. A hall genuinely playing a put-away game — the
+        // last few boxes of the wrong-hall duplicate, say — must be able to
+        // record it, or the line falls into the unmatched pile and someone
+        // keys it by hand instead.
+        const matches = products
           .filter((p) => p.active !== false && p.type === 'flash')
           .filter((p) => !term || p.name.toLowerCase().includes(term))
-          .sort((a, b) => a.name.localeCompare(b.name))
-          .slice(0, 60);
+          .sort((a, b) => hiddenLast(a, b, hidden) || a.name.localeCompare(b.name));
+        const list = matches.slice(0, 60);
+        const clipped = matches.length - list.length;
         return (
           <div className="modal-bg" onClick={() => !busy && setAssign(null)}>
             <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 560 }}>
@@ -344,7 +357,15 @@ export default function SessionUse() {
                       style={{ padding: '7px 12px', cursor: 'pointer', display: 'flex', gap: 10,
                         alignItems: 'center', borderBottom: '1px solid var(--border-lt)',
                         background: p.id === assign.product_id ? '#eef3f5' : 'transparent' }}>
-                      <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
+                      <span style={{ flex: 1, fontSize: 13, opacity: isHidden(hidden, p.id) ? 0.6 : 1 }}>
+                        {p.name}
+                        {isHidden(hidden, p.id) && (
+                          <span className="badge" style={{ marginLeft: 6, fontSize: 10 }}
+                            title="Hidden at this hall — usually the other hall's version of this name. Still pickable if this really is what was played.">
+                            hidden here
+                          </span>
+                        )}
+                      </span>
                       <span className="dimmer" style={{ fontSize: 11 }}>
                         {p.tickets ? `${p.tickets.toLocaleString()} tkts · ` : ''}{have} in stock
                       </span>
@@ -353,6 +374,9 @@ export default function SessionUse() {
                 })}
                 {list.length === 0 && <div className="dimmer" style={{ padding: 16, textAlign: 'center', fontSize: 12.5 }}>
                   Nothing matches. If this is a game we don't carry yet, add it under Add / Update Games first.
+                </div>}
+                {clipped > 0 && <div className="dimmer" style={{ padding: '8px 12px', fontSize: 11.5, textAlign: 'center' }}>
+                  {clipped} more not shown — type a few letters to narrow it down.
                 </div>}
               </div>
               <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>

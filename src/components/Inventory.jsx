@@ -10,6 +10,7 @@ import { needsCost, needsType, needsTickets, needsVendor } from '../lib/logic/se
 import { priceParts, perBoxValue, stockUnit, unitLabel } from '../lib/logic/pricing.js';
 import UpdateGame from './UpdateGame.jsx';
 import { isFloor } from '../lib/logic/location.js';
+import { splitVisible, hiddenStockSummary, hiddenNote, isHidden } from '../lib/logic/hidden.js';
 
 // Available sits immediately after the name, and its unit label right beside it.
 // Managers were losing the row while tracking across to the count — several games
@@ -24,7 +25,8 @@ const COLS = [
 ];
 
 export default function Inventory() {
-  const { hall, products, vendors, boxes, store, reloadHall, setToast, can, openSession } = useContext(AppCtx);
+  const { hall, products, vendors, boxes, store, reloadHall, setToast, can, openSession,
+          hidden, toggleHidden } = useContext(AppCtx);
   const editable = can('boxes');
   const [q, setQ] = useState('');
   const [typeF, setTypeF] = useState('');
@@ -37,6 +39,8 @@ export default function Inventory() {
   const [adjNote, setAdjNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [updPid, setUpdPid] = useState(null);
+  const [showHidden, setShowHidden] = useState(false);
+  const [hideAsk, setHideAsk] = useState(null);   // { row, held } — confirm before hiding stock
 
   // the gold 'update' chip: click it to fill the blank in place
   const Upd = ({ p }) => (
@@ -52,12 +56,20 @@ export default function Inventory() {
     let totVal = 0, unvalued = 0;
     for (const p of products) {
       const c = cnt[p.id];
+      const put = isHidden(hidden, p.id);
       // include games whose whole position is off-site. The row reads 0 available,
       // which is the honest operational answer — dropping it entirely made the game
       // most in need of a shipment indistinguishable from one the hall doesn't carry.
-      if (!c || (!c.inv && !c.open && !c.onorder && !c.off)) continue;
+      //
+      // A HIDDEN game is kept even with nothing behind it, and this is load-bearing.
+      // Hide a game holding two boxes, play them both, and without this line the row
+      // leaves `rows` the moment the count reaches zero — so "Show hidden" has
+      // nothing to show and there is no way back short of editing the database.
+      // Whatever a hall has put away must stay reachable so it can be brought back.
+      if (!put && (!c || (!c.inv && !c.open && !c.onorder && !c.off))) continue;
       if (q && !p.name.toLowerCase().includes(q.toLowerCase())) continue;
       if (!passesFilters(p, { type: typeF, misc: miscF })) continue;
+      const cc = c || {};
       const asg = {};
       for (const b of boxes) {
         if (b.product_id === p.id && b.state === 'in_inventory' && isFloor(b) && b.session_tag) {
@@ -68,23 +80,23 @@ export default function Inventory() {
       // is stock on this hall's floor, because the question it answers is "what
       // can we play and what do we need". Owned-but-elsewhere lives on its own
       // screen; mixing the two here is what made the figures unreadable.
-      const held = (c.inv || 0) + (c.open || 0);
+      const held = (cc.inv || 0) + (cc.open || 0);
       // a case that splits into 16 totes is worth 1/16 per tote, not the case
       // price per tote
       const value = held * perBoxValue(p);
       totVal += value;
       if (needsCost(p)) unvalued += held;   // counted, but we can't put a number on it yet
       out.push({
-        p, c, value,
+        p, c: cc, value,
         s: {
           name: p.name.toLowerCase(), vendor: vmap[p.vendor_id]?.name || '', type: p.type,
           tickets: p.tickets || 0, price: ticketPrice(p), cost: Number(p.cost) || 0,
-          inv: c.inv || 0, open: c.open || 0, onorder: c.onorder || 0, value,
+          inv: cc.inv || 0, open: cc.open || 0, onorder: cc.onorder || 0, value,
           unit: stockUnit(p)[1],
           assigned: Object.keys(asg).join(', '),
         },
         assignedLabel: Object.entries(asg).map(([k, n]) => `${k} ×${n}`).join(', ') || '—',
-        avail: (c.inv || 0) - Object.values(asg).reduce((a, n) => a + n, 0),
+        avail: (cc.inv || 0) - Object.values(asg).reduce((a, n) => a + n, 0),
       });
     }
     out.sort((a, b) => {
@@ -95,7 +107,18 @@ export default function Inventory() {
     out.totVal = totVal;
     out.unvalued = unvalued;
     return out;
-  }, [products, boxes, cnt, q, typeF, miscF, sortKey, dir, vmap]);
+  }, [products, boxes, cnt, q, typeF, miscF, sortKey, dir, vmap, hidden]);
+
+  // Hidden games are split off AFTER rows is built, which is the whole point:
+  // rows.totVal has already counted them. Hiding a game changes what a manager
+  // reads, never what the hall is holding, so the money on this screen is the
+  // same number whether the row is on show or put away.
+  const split = useMemo(() => splitVisible(rows, hidden, (r) => r.p.id), [rows, hidden]);
+  const shown = showHidden ? rows : split.visible;
+  const hiddenSummary = useMemo(
+    () => hiddenStockSummary(rows, hidden, (r) => r.p.id,
+      (r) => ({ boxes: (r.c.inv || 0) + (r.c.open || 0), value: r.value })),
+    [rows, hidden]);
 
   const sortBy = (k) => {
     if (k === sortKey) setDir(-dir);
@@ -118,6 +141,42 @@ export default function Inventory() {
     });
   };
 
+
+  /**
+   * Put a game away for this hall, or bring it back.
+   *
+   * Hiding something that still holds boxes is allowed but never silent: the
+   * confirm names the count, and the note under the table keeps naming it for as
+   * long as the stock exists. The alternative — refusing until the count reaches
+   * zero — would mean the wrong-hall duplicates could never be tidied away, since
+   * their leftover boxes may never be played.
+   */
+  const askHide = (row) => {
+    const c = row.c || {};
+    const held = (c.inv || 0) + (c.open || 0);
+    // On-order matters as much as floor stock, and is the easier one to miss:
+    // Receiving does not filter on hidden, so boxes already paid for would arrive
+    // onto a floor where the game has no row on either operational screen.
+    // Off-site counts too — it is owned, it is just not here.
+    if (held || c.onorder || c.off) {
+      setHideAsk({ row, held, onorder: c.onorder || 0, off: c.off || 0 });
+      return;
+    }
+    doHide(row, true);
+  };
+
+  const doHide = async (row, hide) => {
+    setHideAsk(null);
+    try {
+      await toggleHidden(row.p.id, hide);
+      setToast(
+        hide ? `${row.p.name} hidden at ${hall === 'sc' ? 'Santa Clara' : 'Redwood City'}`
+             : `${row.p.name} is showing again`,
+        () => toggleHidden(row.p.id, !hide));
+    } catch (e) {
+      setToast(e.message || 'Could not change that');
+    }
+  };
 
   // A hand count that disagrees with the system. The note is required — a
   // count that changes without a reason is worse than no count at all.
@@ -155,7 +214,14 @@ export default function Inventory() {
         </select>
         <div className="grow" />
         <span className="dim" style={{ fontSize: 13 }}>
-          {rows.length} products in stock · on the floor, <b className="mono">{fmtMoney(rows.totVal)}</b>
+          <span title={hiddenSummary.withStock > 0
+            ? `${shown.length} shown. The money covers all ${rows.length} including ${hiddenSummary.count} hidden, because hiding a game does not stop the hall owning it.`
+            : ''}>
+            {shown.length} products in stock · on the floor, <b className="mono">{fmtMoney(rows.totVal)}</b>
+            {hiddenSummary.withStock > 0 && (
+              <span className="dimmer" style={{ fontSize: 11.5 }}> (incl. {hiddenSummary.boxes} hidden)</span>
+            )}
+          </span>
           {rows.unvalued > 0 && (
             <span className="tbd" style={{ cursor: 'default', fontSize: 12 }}
               title={`${rows.unvalued} units have no cost yet, so they aren't in this figure`}>
@@ -163,6 +229,14 @@ export default function Inventory() {
             </span>
           )}
         </span>
+        {hiddenSummary.count > 0 && (
+          <button className={'btn ' + (showHidden ? 'orange' : 'ghost')} onClick={() => setShowHidden(!showHidden)}
+            title={showHidden
+              ? 'Go back to just the games this hall uses'
+              : `${hiddenSummary.count} game(s) put away at this hall — show them so you can bring one back`}>
+            {showHidden ? '🙈 Hide them again' : `👁 Show hidden (${hiddenSummary.count})`}
+          </button>
+        )}
         {editable && (
           <>
             <button className="btn ghost" onClick={() => setShowAdjust(true)}
@@ -196,10 +270,14 @@ export default function Inventory() {
             <th className="last" style={{ width: 200 }} />
           </tr></thead>
           <tbody>
-            {rows.map((r) => (
-              <tr key={r.p.id}>
+            {shown.map((r) => (
+              <tr key={r.p.id} style={isHidden(hidden, r.p.id) ? { opacity: 0.55 } : undefined}>
                 <td className="first">
                   {r.p.name}
+                  {isHidden(hidden, r.p.id) && (
+                    <span className="badge" style={{ marginLeft: 6, fontSize: 10.5 }}
+                      title="Put away at this hall — still owned, still counted, just not normally shown">hidden</span>
+                  )}
                   {needsCost(r.p) && <span className="badge b-gold" style={{ marginLeft: 6 }} title="No unit cost — can't be ordered or received until set">can't order</span>}
                 </td>
                 <td className="r mono">
@@ -248,19 +326,68 @@ export default function Inventory() {
                 <td style={{ fontSize: 11, color: 'var(--green)' }}>{r.assignedLabel}</td>
                 <td className="last r" style={{ whiteSpace: 'nowrap' }}>
                   {editable ? (<>
-                    <button className="btn orange sm" disabled={(r.c.inv || 0) <= 0} onClick={() => openOne(r)}>Open</button>{' '}
-                    <button className="btn ghost sm" title="Edit this game — name, distributor, type, price, tickets"
-                      onClick={() => setUpdPid(r.p.id)}>Edit</button>
+                    {isHidden(hidden, r.p.id)
+                      ? <button className="btn ghost sm" title="Show this game at this hall again"
+                          onClick={() => doHide(r, false)}>Unhide</button>
+                      : <>
+                          <button className="btn orange sm" disabled={(r.c.inv || 0) <= 0} onClick={() => openOne(r)}>Open</button>{' '}
+                          <button className="btn ghost sm" title="Edit this game — name, distributor, type, price, tickets"
+                            onClick={() => setUpdPid(r.p.id)}>Edit</button>{' '}
+                          <button className="btn ghost sm" title="Put this game away for this hall only. Nothing is deleted — the boxes, their cost and their history all stay."
+                            onClick={() => askHide(r)}>Hide</button>
+                        </>}
                   </>) : <span className="dimmer" style={{ fontSize: 11 }}>read-only</span>}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-        {rows.length === 0 && <div style={{ padding: 30, textAlign: 'center' }} className="dimmer">No products match.</div>}
+        {shown.length === 0 && <div style={{ padding: 30, textAlign: 'center' }} className="dimmer">No products match.</div>}
       </div>
+      {hiddenNote(hiddenSummary) && (
+        <div className="dimmer" style={{ fontSize: 12, marginTop: 8 }}
+          title="Hiding is a view filter for this hall only. The boxes, their cost and their state are untouched, and Owned Inventory still reports them.">
+          {hiddenNote(hiddenSummary)}
+          {!showHidden && hiddenSummary.count > 0 && (
+            <button className="btn ghost sm" style={{ marginLeft: 8 }} onClick={() => setShowHidden(true)}>Show them</button>
+          )}
+        </div>
+      )}
 
       {updPid && <UpdateGame product={products.find((p) => p.id === updPid)} onClose={() => setUpdPid(null)} />}
+
+      {hideAsk && (
+        <div className="modal-bg" onClick={() => setHideAsk(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>Hide this game here?</div>
+            <p className="dim" style={{ fontSize: 12.5, marginBottom: 12 }}>{hideAsk.row.p.name}</p>
+            <p style={{ fontSize: 13, marginBottom: 10 }}>
+              {hideAsk.held > 0 && <>
+                It still has <b>{unitLabel(hideAsk.row.p, hideAsk.held)}</b> on the floor at{' '}
+                {hall === 'sc' ? 'Santa Clara' : 'Redwood City'}, worth{' '}
+                <b className="mono">{fmtMoney(hideAsk.row.value)}</b>.{' '}
+              </>}
+              {hideAsk.onorder > 0 && <>
+                <b>{unitLabel(hideAsk.row.p, hideAsk.onorder)}</b> {hideAsk.onorder === 1 ? 'is' : 'are'} on
+                order and will still arrive.{' '}
+              </>}
+              {hideAsk.off > 0 && <>
+                <b>{unitLabel(hideAsk.row.p, hideAsk.off)}</b> {hideAsk.off === 1 ? 'is' : 'are'} owned
+                off-site.{' '}
+              </>}
+            </p>
+            <p className="dimmer" style={{ fontSize: 12, marginBottom: 14 }}>
+              Nothing is deleted and nothing moves. Anything on the floor stays in the floor total
+              above, stays on Owned Inventory, and can still be scanned. The row simply stops
+              appearing on Inventory and Purchase for this hall until you unhide it.
+            </p>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn" onClick={() => doHide(hideAsk.row, true)}>Hide it</button>
+              <button className="btn ghost" onClick={() => setHideAsk(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {adj && (
         <div className="modal-bg" onClick={() => setAdj(null)}>

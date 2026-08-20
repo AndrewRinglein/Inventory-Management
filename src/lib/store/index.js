@@ -13,6 +13,8 @@
 //              uploadInvoicePhoto(file) -> path, getShipments(hallId)
 //   location:  moveBoxes({hallId, productId, from, to, qty, ref}), getOffsite(hallId),
 //              confirmOffsite(ids, on)   -- where stock IS, independent of its state
+//   hidden:    getHidden(hallId) -> productId[], setHidden(hallId, productId, hide, note)
+//              -- a hall's private view of the shared catalogue. DISPLAY ONLY.
 //   payments:  getPayments(hallId), addPayment(p), setPaymentStatus(id, status)
 //   emails:    sendEmails(list) -> logs (routes via edge function in prod, log-only in demo),
 //              getEmails(hallId)

@@ -848,6 +848,46 @@ export class SupabaseStore {
     return { confirmed: ids.length };
   }
 
+  // ---- hidden games: a hall's private view of a shared catalogue ----
+
+  /** Product ids this hall does not want to see. Display only — never a stock filter. */
+  async getHidden(hallId) {
+    const rows = await fetchAll(() => this.sb.from('hidden_products')
+      .select('product_id,hidden_at,note').eq('hall_id', hallId));
+    return rows.map((r) => r.product_id);
+  }
+
+  /**
+   * Hide or unhide one game at one hall.
+   *
+   * Deliberately upsert/delete rather than a toggle: two managers on the same
+   * screen pressing Hide would otherwise flip it back to visible, and a toggle
+   * would also mean the caller has to already know the current state to be right.
+   */
+  async setHidden(hallId, productId, hide, note = null) {
+    if (!hallId || !productId) throw new Error('setHidden needs a hall and a product');
+    // read the name BEFORE writing — a lookup that fails after the commit reports
+    // failure for work that actually happened
+    const prod = ok(await this.sb.from('products').select('id,name').eq('id', productId).maybeSingle());
+    if (!prod) throw new Error(`No such game: ${productId}`);
+    if (hide) {
+      // note is only written when one is supplied — the UI passes null, and an
+      // upsert carrying it would wipe a reason someone typed earlier
+      const row = { hall_id: hallId, product_id: productId };
+      if (note != null) row.note = note;
+      ok(await this.sb.from('hidden_products')
+        .upsert(row, { onConflict: 'hall_id,product_id' }));
+    } else {
+      ok(await this.sb.from('hidden_products').delete()
+        .eq('hall_id', hallId).eq('product_id', productId));
+    }
+    await this.logEvent(hide ? 'catalog.hide' : 'catalog.unhide', 'products', productId, {
+      label: `${prod.name} ${hide ? 'hidden at' : 'shown again at'} ${hallId.toUpperCase()}`,
+      hall: hallId, product_id: productId, note,
+    });
+    return { product_id: productId, hidden: !!hide };
+  }
+
   // ---- payments ----
   async getPayments(hallId) { return fetchAll(() => this.sb.from('payments').select('*').eq('hall_id', hallId).order('created_at', { ascending: false })); }
   async addPayment(p) { return ok(await this.sb.from('payments').insert(p).select().single()); }

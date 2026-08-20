@@ -1425,3 +1425,122 @@ test('a failed multi-line adjustment leaves nothing behind', async () => {
   assert.equal((store.db.stock_adjustments || []).length, 0, 'no orphan header');
   assert.equal((store.db.stock_adjustment_lines || []).length, 0, 'no orphan lines');
 });
+
+// ---------- hiding games per hall ----------
+import { hiddenSet, isHidden, splitVisible, hiddenStockSummary, hiddenNote, hiddenLast }
+  from '../src/lib/logic/hidden.js';
+
+test('hiddenSet keeps one hall out of the other hall\'s business', () => {
+  const rows = [
+    { hall_id: 'sc',  product_id: 'P278' },
+    { hall_id: 'rwc', product_id: 'C1787197160866' },
+    { hall_id: 'rwc', product_id: 'H027' },
+  ];
+  assert.deepEqual([...hiddenSet(rows, 'sc')], ['P278']);
+  assert.deepEqual([...hiddenSet(rows, 'rwc')].sort(), ['C1787197160866', 'H027']);
+  // no hall given -> everything, which is what the app passes after the store
+  // has already filtered by hall
+  assert.equal(hiddenSet(rows).size, 3);
+  assert.equal(hiddenSet(null, 'sc').size, 0);
+});
+
+test('splitVisible partitions without losing or duplicating a row', () => {
+  const rows = [{ id: 'A' }, { id: 'B' }, { id: 'C' }];
+  const h = hiddenSet(['B']);
+  const { visible, hidden } = splitVisible(rows, h);
+  assert.deepEqual(visible.map((r) => r.id), ['A', 'C']);
+  assert.deepEqual(hidden.map((r) => r.id), ['B']);
+  assert.equal(visible.length + hidden.length, rows.length);
+});
+
+test('splitVisible reads Inventory rows, which nest the product', () => {
+  const rows = [{ p: { id: 'A' } }, { p: { id: 'B' } }];
+  const { visible } = splitVisible(rows, hiddenSet(['A']), (r) => r.p.id);
+  assert.deepEqual(visible.map((r) => r.p.id), ['B']);
+});
+
+test('hidden stock is reported, never quietly dropped', () => {
+  // the whole safety argument: hiding is a view filter, so the boxes behind it
+  // have to keep being counted and have to keep being mentioned
+  const rows = [
+    { id: 'P278', boxes: 5, value: 210 },
+    { id: 'H027', boxes: 0, value: 0 },
+    { id: 'OK',   boxes: 9, value: 400 },
+  ];
+  const s = hiddenStockSummary(rows, hiddenSet(['P278', 'H027']), (r) => r.id,
+    (r) => ({ boxes: r.boxes, value: r.value }));
+  assert.equal(s.count, 2, 'both hidden games counted');
+  assert.equal(s.withStock, 1, 'only one of them still holds boxes');
+  assert.equal(s.boxes, 5);
+  assert.equal(s.value, 210);
+  assert.match(hiddenNote(s), /5 boxes still on the floor/);
+  assert.match(hiddenNote(s), /counted in the totals above/);
+});
+
+test('the hidden note says nothing when there is nothing to say', () => {
+  assert.equal(hiddenNote(hiddenStockSummary([{ id: 'A' }], hiddenSet([]))), null);
+  const none = hiddenStockSummary([{ id: 'A' }], hiddenSet(['A']), (r) => r.id, () => ({ boxes: 0 }));
+  assert.equal(hiddenNote(none), '1 game hidden at this hall.');
+});
+
+test('the game picker sinks a hall\'s put-away records without dropping them', () => {
+  // Red White & Blue is three records; RWC has put the Marathon one away
+  const h = hiddenSet(['P278']);
+  const byName = (a, b) => a.name.localeCompare(b.name);
+  const list = [
+    { id: 'P278', name: 'Red,White and Blue paper' },
+    { id: 'C178', name: 'Red White and Blue Paper' },
+    { id: 'H027', name: 'Red White & Blue Balls' },
+  ].sort((a, b) => hiddenLast(a, b, h) || byName(a, b));
+  assert.equal(list[list.length - 1].id, 'P278', 'the put-away record sorts last');
+  assert.equal(list.length, 3, 'and is still in the list — sorted, never filtered');
+  // stable when nothing is hidden, so the ordinary case is plain alphabetical
+  const plain = [{ id: 'B', name: 'B' }, { id: 'A', name: 'A' }]
+    .sort((a, b) => hiddenLast(a, b, hiddenSet([])) || byName(a, b));
+  assert.deepEqual(plain.map((p) => p.id), ['A', 'B']);
+});
+
+test('hiding a game touches no box, no cost and no state', async () => {
+  const store = shortStore();
+  const before = JSON.stringify(store.db.boxes);
+  await store.setHidden('sc', 'G1', true, 'RWC buys the other one');
+  assert.deepEqual(await store.getHidden('sc'), ['G1']);
+  assert.equal(JSON.stringify(store.db.boxes), before, 'stock is untouched');
+  // and the other hall is unaffected
+  assert.deepEqual(await store.getHidden('rwc'), []);
+});
+
+test('hiding is idempotent, so two managers pressing Hide agree', async () => {
+  const store = shortStore();
+  await store.setHidden('sc', 'G1', true);
+  await store.setHidden('sc', 'G1', true);
+  assert.deepEqual(await store.getHidden('sc'), ['G1'], 'no duplicate row');
+  await store.setHidden('sc', 'G1', false);
+  await store.setHidden('sc', 'G1', false);
+  assert.deepEqual(await store.getHidden('sc'), []);
+});
+
+test('hiding a game that does not exist fails before it writes', async () => {
+  const store = shortStore();
+  await assert.rejects(() => store.setHidden('sc', 'NOPE', true), /No such game/);
+  assert.deepEqual(await store.getHidden('sc'), []);
+  await assert.rejects(() => store.setHidden('', 'G1', true), /needs a hall/);
+});
+
+test('unhiding leaves the other hall alone', async () => {
+  const store = shortStore();
+  await store.setHidden('sc', 'G1', true);
+  await store.setHidden('rwc', 'G1', true);
+  await store.setHidden('sc', 'G1', false);
+  assert.deepEqual(await store.getHidden('sc'), []);
+  assert.deepEqual(await store.getHidden('rwc'), ['G1'], 'RWC still hides it');
+});
+
+test('a re-hide does not wipe a reason someone typed earlier', async () => {
+  const store = shortStore();
+  await store.setHidden('sc', 'G1', true, 'RWC buys the Bingo Vision one');
+  await store.setHidden('sc', 'G1', true);          // the UI passes no note
+  assert.equal(store.db.hidden[0].note, 'RWC buys the Bingo Vision one');
+  await store.setHidden('sc', 'G1', true, 'changed my mind');
+  assert.equal(store.db.hidden[0].note, 'changed my mind', 'a real note still overwrites');
+});
