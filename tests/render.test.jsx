@@ -10,7 +10,7 @@
 
 import React from 'react';
 import { renderToString } from 'react-dom/server';
-import { AppCtx } from '../src/App.jsx';
+import App, { AppCtx } from '../src/App.jsx';
 
 import Dashboard from '../src/components/Dashboard.jsx';
 import Purchase from '../src/components/Purchase.jsx';
@@ -230,4 +230,29 @@ console.log('');
     /title="Put this game away for this hall only/.test(render(Purchase, { ...ctx, orderQty: {} })));
 }
 
-process.exit(failed + layoutFailed + hideFailed ? 1 : 0);
+// ---------------------------------------------------------------- App itself
+//
+// Every screen above is rendered against a mock context, which means App — the
+// component that BUILDS that context — was never mounted by any test. It shipped
+// a white screen: `const hidden = useMemo(() => hiddenSet(hiddenIds), ...)` was
+// written four lines above `const [hiddenIds, setHiddenIds] = useState([])`, and
+// reading a const before its declaration is a ReferenceError. `vite build`
+// compiles it happily; the error only exists at runtime, on the first render,
+// before anything paints.
+//
+// So App gets mounted here. It bails out early — no session in this environment,
+// so it returns null almost immediately — but every hook in the component body
+// runs first, which is exactly where that class of bug lives. Any hook-order
+// violation, temporal dead zone or undefined read in App's setup fails here.
+
+let appFailed = 0;
+console.log('');
+try {
+  const html = renderToString(<App />);
+  console.log(`  ok    App mounts and its hooks run (rendered ${html.length} chars)`);
+} catch (e) {
+  appFailed++;
+  console.log(`  FAIL  App: ${e.message}`);
+}
+
+process.exit(failed + layoutFailed + hideFailed + appFailed ? 1 : 0);

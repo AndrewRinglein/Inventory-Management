@@ -39,14 +39,17 @@ export default function App() {
   const [allPos, setPos] = useState([]);
   // archived orders drop out of every working view — Open Orders' Archive tab reads allPos
   const pos = useMemo(() => allPos.filter((p) => !p.archived_at), [allPos]);
-  // One Set, rebuilt only when the list changes. It has to be memoised and it has
-  // to live above the early returns below: screens key useMemos on it, so a fresh
-  // Set every render would re-walk the 456-game catalogue on every toast tick.
-  const hidden = useMemo(() => hiddenSet(hiddenIds), [hiddenIds]);
   const [payments, setPayments] = useState([]);
   const [orderQty, setOrderQtyState] = useState({});
   // product ids this hall has put away. Reloads with the hall, because it IS per-hall.
   const [hiddenIds, setHiddenIds] = useState([]);
+  // One Set, rebuilt only when the list changes. Two constraints fix where this
+  // line can live: it must sit AFTER hiddenIds is declared (a const read above its
+  // own declaration is a ReferenceError at runtime, which the build cannot see and
+  // which white-screens the whole app), and BEFORE the early returns further down,
+  // because it is a hook. Screens key useMemos on this Set, so a fresh identity
+  // every render would re-walk the 456-game catalogue on every toast tick.
+  const hidden = useMemo(() => hiddenSet(hiddenIds), [hiddenIds]);
   // read inside async callbacks that must not act on a hall the user has left
   const hallRef = useRef(hall);
   useEffect(() => { hallRef.current = hall; }, [hall]);
