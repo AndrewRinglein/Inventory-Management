@@ -1,6 +1,6 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
-import { fmtMoney, poFromRecord, repriceFromCatalog } from '../lib/logic/po.js';
+import { fmtMoney, poFromRecord, repriceFromCatalog, bySentDesc, fmtOrderDate, HALL_LABEL, HALL_SHORT } from '../lib/logic/po.js';
 import { buildOrderEmails, poHtml, senderFor, PO_TEXT_DEFAULTS } from '../lib/logic/emails.js';
 import { addressResolver } from '../lib/logic/halls.js';
 
@@ -32,7 +32,10 @@ export default function Orders() {
   const vmap = useMemo(() => Object.fromEntries(vendors.map((v) => [v.id, v])), [vendors]);
   const archived = (allPos || []).filter((p) => p.archived_at);
   const shown = view === 'archived' ? archived : pos;
-  const sorted = [...shown].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+  // Ranked by the day the distributor actually got it, not the day someone started
+  // typing it. Those differ whenever an order is drafted and sent on separate days,
+  // which is exactly when "what went out most recently" is being asked.
+  const sorted = [...shown].sort(bySentDesc);
   const cur = sorted.find((p) => p.id === sel) || sorted[0];
 
   useEffect(() => {
@@ -195,13 +198,26 @@ export default function Orders() {
       <div className="two-col" style={{ gridTemplateColumns: '420px 1fr' }}>
         <div className="card" style={{ overflow: 'hidden' }}>
           <table className="tbl">
-            <thead><tr><th className="first">PO #</th><th>Vendor</th><th>Status</th><th className="r last">Total</th></tr></thead>
+            <thead><tr>
+              <th className="first">PO #</th><th style={{ width: 48 }}>Hall</th>
+              <th>Distributor</th><th style={{ width: 62 }} title="The day it went to the distributor">Sent</th>
+              <th>Status</th><th className="r last">Total</th>
+            </tr></thead>
             <tbody>
               {sorted.map((p) => (
                 <tr key={p.id} onClick={() => setSel(p.id)}
                   style={{ cursor: 'pointer', background: cur?.id === p.id ? '#eef3f5' : 'transparent' }}>
                   <td className="first mono" style={{ fontSize: 12 }}>{p.num}</td>
+                  <td className="dimmer" style={{ fontSize: 11 }} title={HALL_LABEL[p.hall_id] || p.hall_id}>
+                    {HALL_SHORT[p.hall_id] || p.hall_id}
+                  </td>
                   <td style={{ fontSize: 12 }}>{vmap[p.vendor_id]?.name}</td>
+                  <td className="mono" style={{ fontSize: 11.5 }}
+                      title={p.sent_at ? `Sent ${new Date(p.sent_at).toLocaleString()}`
+                                       : 'Never sent — dated from when it was created'}>
+                    {fmtOrderDate(p)}
+                    {!p.sent_at && <span className="dimmer"> *</span>}
+                  </td>
                   <td><span className={'badge ' + statusOf(p)[0]} style={{ fontSize: 10 }}>{statusOf(p)[1]}</span></td>
                   <td className="r mono last">{fmtMoney(p.total)}</td>
                 </tr>

@@ -1544,3 +1544,36 @@ test('a re-hide does not wipe a reason someone typed earlier', async () => {
   await store.setHidden('sc', 'G1', true, 'changed my mind');
   assert.equal(store.db.hidden[0].note, 'changed my mind', 'a real note still overwrites');
 });
+
+// ---------- how orders are dated and ranked ----------
+import { orderDate, bySentDesc, fmtOrderDate } from '../src/lib/logic/po.js';
+
+test('orders rank by the day they went out, not the day they were started', () => {
+  // the case that made the old created_at sort wrong: drafted Monday, sent Friday
+  const drafted = { num: 'A', created_at: '2026-08-24T09:00:00Z', sent_at: '2026-08-28T17:00:00Z' };
+  const quick   = { num: 'B', created_at: '2026-08-26T09:00:00Z', sent_at: '2026-08-26T10:00:00Z' };
+  assert.deepEqual([quick, drafted].sort(bySentDesc).map((p) => p.num), ['A', 'B'],
+    'the one sent latest comes first, even though it was created earliest');
+});
+
+test('an order recorded after the fact still takes its place', () => {
+  const recorded = { num: 'R', created_at: '2026-08-27T00:00:00Z', sent_at: null };
+  const sent     = { num: 'S', created_at: '2026-08-01T00:00:00Z', sent_at: '2026-08-20T00:00:00Z' };
+  assert.equal(orderDate(recorded), '2026-08-27T00:00:00Z', 'falls back to created_at');
+  assert.deepEqual([sent, recorded].sort(bySentDesc).map((p) => p.num), ['R', 'S']);
+});
+
+test('only an order with no date at all sinks to the bottom', () => {
+  const broken = { num: 'X' };
+  const ok1 = { num: 'Y', sent_at: '2026-08-01T00:00:00Z' };
+  assert.equal(orderDate(broken), null);
+  assert.deepEqual([broken, ok1].sort(bySentDesc).map((p) => p.num), ['Y', 'X']);
+  assert.equal(fmtOrderDate(broken), '—');
+  assert.equal(fmtOrderDate({ sent_at: 'not a date' }), '—', 'garbage does not render Invalid Date');
+});
+
+test('the sort is stable enough to not reorder equal dates', () => {
+  const a = { num: 'a', sent_at: '2026-08-10T00:00:00Z' };
+  const b = { num: 'b', sent_at: '2026-08-10T00:00:00Z' };
+  assert.deepEqual([a, b].sort(bySentDesc).map((p) => p.num), ['a', 'b']);
+});

@@ -231,3 +231,44 @@ export function repriceFromCatalog(po, lines, products, vendor) {
   });
   return { lines: next, totals: poTotals(next, vendor?.tax_rate || 0), changes };
 }
+
+/**
+ * The date an order went out, and how orders are ranked by it.
+ *
+ * An order has three dates and only one of them is the one people mean. created_at
+ * is when someone started typing; archived_at is when it was filed away; sent_at is
+ * when the distributor actually got it, and that is the date a manager is asking
+ * about when they say "what's outstanding". The lists used to sort on created_at,
+ * which is close enough to look right and wrong exactly when it matters — an order
+ * drafted on Monday and sent on Friday sorted under Monday.
+ *
+ * An order recorded after the fact may have no sent_at at all, so created_at is the
+ * fallback rather than a blank that sorts to the bottom.
+ */
+export const orderDate = (po) => po?.sent_at || po?.created_at || null;
+
+/**
+ * Most recently sent first, ranking on orderDate — so an order recorded after the
+ * fact still takes its place by the day it was created rather than sinking. Only
+ * an order with neither date sorts to the bottom, which is a broken row, not a
+ * late one.
+ */
+export const bySentDesc = (a, b) => {
+  const x = orderDate(a), y = orderDate(b);
+  if (!x && !y) return 0;
+  if (!x) return 1;
+  if (!y) return -1;
+  return String(y).localeCompare(String(x));
+};
+
+/** "20 Aug" / "Aug 20" per the viewer's locale. "—" only when there is no date at all. */
+export function fmtOrderDate(po) {
+  const d = orderDate(po);
+  if (!d) return '—';
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return '—';
+  return dt.toLocaleDateString([], { day: 'numeric', month: 'short' });
+}
+
+export const HALL_LABEL = { sc: 'Santa Clara', rwc: 'Redwood City' };
+export const HALL_SHORT = { sc: 'SC', rwc: 'RWC' };

@@ -255,4 +255,42 @@ try {
   console.log(`  FAIL  App: ${e.message}`);
 }
 
-process.exit(failed + layoutFailed + hideFailed + appFailed ? 1 : 0);
+// ------------------------------------------------------- orders are date-ranked
+//
+// logic.test.js proves bySentDesc ranks correctly. That is not the same as proving
+// the SCREENS call it — reverting Orders to the old created_at sort left every unit
+// test green. So the ordering is asserted through the rendered markup, on the exact
+// case the two sorts disagree about: an order drafted first but sent last.
+
+const twoPos = [
+  { id: 'early-send', num: 'PO-SENT-FIRST', hall_id: 'sc', vendor_id: 'bv', status: 'sent',
+    subtotal: '10.00', tax: '0.00', total: '10.00',
+    created_at: '2026-08-26T09:00:00Z', sent_at: '2026-08-26T10:00:00Z',
+    archived_at: null, recorded_only: false, vendor_ref: null },
+  { id: 'late-send', num: 'PO-SENT-LAST', hall_id: 'sc', vendor_id: 'bv', status: 'sent',
+    subtotal: '20.00', tax: '0.00', total: '20.00',
+    created_at: '2026-08-24T09:00:00Z', sent_at: '2026-08-28T17:00:00Z',   // drafted first, sent last
+    archived_at: null, recorded_only: false, vendor_ref: null },
+];
+
+let orderFailed = 0;
+const orderCheck = (label, cond) => {
+  if (cond) console.log(`  ok    ${label}`);
+  else { orderFailed++; console.log(`  FAIL  ${label}`); }
+};
+
+console.log('');
+{
+  const ctx2 = { ...ctx, pos: twoPos, allPos: twoPos };
+  for (const [name, Comp] of [['Orders', Orders], ['Dashboard', Dashboard]]) {
+    const html = renderToString(<AppCtx.Provider value={ctx2}><Comp /></AppCtx.Provider>);
+    const first = html.indexOf('PO-SENT-LAST');
+    const second = html.indexOf('PO-SENT-FIRST');
+    orderCheck(`${name} lists the most recently SENT order first`,
+      first !== -1 && second !== -1 && first < second);
+    orderCheck(`${name} shows the sent date and the distributor`,
+      /Aug/.test(html) && html.includes('Bingo Vision'));
+  }
+}
+
+process.exit(failed + layoutFailed + hideFailed + appFailed + orderFailed ? 1 : 0);

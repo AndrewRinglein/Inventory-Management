@@ -1,12 +1,13 @@
 import React, { useContext, useEffect, useState } from 'react';
 import { AppCtx } from '../App.jsx';
-import { fmtMoney, sumMoney } from '../lib/logic/po.js';
+import { fmtMoney, sumMoney, bySentDesc, fmtOrderDate, HALL_LABEL, HALL_SHORT } from '../lib/logic/po.js';
 import { onFloor, isOffsite } from '../lib/logic/location.js';
 
 const HALL_NAMES = { sc: 'Santa Clara', rwc: 'Redwood City' };
 
 export default function Dashboard() {
-  const { hall, boxes, pos, payments, products, setScreen, store, settings, reloadSettings, setToast, can } = useContext(AppCtx);
+  const { hall, boxes, pos, payments, products, vendors, setScreen, store, settings, reloadSettings, setToast, can } = useContext(AppCtx);
+  const vmap = Object.fromEntries((vendors || []).map((v) => [v.id, v]));
   const [events, setEvents] = useState([]);
   const lastEom = settings.eom?.[hall];
   const markEom = async () => {
@@ -34,7 +35,9 @@ export default function Dashboard() {
   // the working views, so it shouldn't keep feeding the dashboard a number
   const liveIds = new Set(pos.map((p) => p.id));
   const inTransit = boxes.filter((b) => b.state === 'on_order' && (!b.po_id || liveIds.has(b.po_id))).length;
-  const openPos = pos.filter((p) => p.status === 'sent' || p.status === 'partial');
+  // newest out the door first — the question this card answers is "what is
+  // outstanding right now", and the most recent order is the one being chased
+  const openPos = pos.filter((p) => p.status === 'sent' || p.status === 'partial').sort(bySentDesc);
   const openPay = payments.filter((p) => p.status === 'open');
 
   // An order that arrives and closes the same day never touches "open orders",
@@ -49,7 +52,7 @@ export default function Dashboard() {
       <div className="page-head">
         <div className="h1">Dashboard — {HALL_NAMES[hall]}</div>
         <div className="grow" />
-        <span className="dimmer" style={{ fontSize: 12.5 }}>{products.length} products · 4 vendors</span>
+        <span className="dimmer" style={{ fontSize: 12.5 }}>{products.length} products · {(vendors || []).length} distributor{(vendors || []).length === 1 ? '' : 's'}</span>
         <span className="dim" style={{ fontSize: 12.5 }}>
           Last EOM: <b>{lastEom ? new Date(lastEom).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'never'}</b>
         </span>
@@ -71,6 +74,14 @@ export default function Dashboard() {
               {openPos.map((p) => (
                 <tr key={p.id} style={{ cursor: 'pointer' }} onClick={() => setScreen('orders')}>
                   <td className="first mono">{p.num}</td>
+                  <td className="dimmer" style={{ fontSize: 11 }} title={HALL_LABEL[p.hall_id] || p.hall_id}>
+                    {HALL_SHORT[p.hall_id] || p.hall_id}
+                  </td>
+                  <td style={{ fontSize: 12 }}>{vmap[p.vendor_id]?.name || '—'}</td>
+                  <td className="mono" style={{ fontSize: 11.5 }}
+                      title={p.sent_at ? `Sent ${new Date(p.sent_at).toLocaleString()}` : 'Never sent — dated from when it was created'}>
+                    {fmtOrderDate(p)}{!p.sent_at && <span className="dimmer"> *</span>}
+                  </td>
                   <td><span className={'badge ' + (p.status === 'sent' ? 'b-gold' : 'b-orange')}>{p.status === 'sent' ? 'awaiting delivery' : 'partially received'}</span></td>
                   <td className="r mono last">{fmtMoney(p.total)}</td>
                 </tr>
