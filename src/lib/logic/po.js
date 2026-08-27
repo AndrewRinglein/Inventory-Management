@@ -88,7 +88,7 @@ export function poTotals(lines, taxRate) {
 export const VENDOR_CODES = { bv: 'BV', md: 'MD', cbs: 'CBS', pbf: 'PBF' };
 
 /**
- * Next PO number, e.g. SC-2026-08-BV-014.
+ * Next PO number, e.g. SC-26-08-27-BV-014.
  * seq is a plain object persisted in settings ('po_sequence'): { "SC-BV": 13, ... }
  * Returns { num, seq } with the incremented sequence (caller persists it).
  */
@@ -97,8 +97,14 @@ export function nextPoNum(seq, hallId, vendorId, date = new Date()) {
   const vc = VENDOR_CODES[vendorId] || vendorId.toUpperCase();
   const key = `${hall}-${vc}`;
   const n = (seq[key] || 0) + 1;
-  const ym = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-  return { num: `${hall}-${ym}-${vc}-${String(n).padStart(3, '0')}`, seq: { ...seq, [key]: n } };
+  // YY-MM-DD. The day matters: the whole system's history so far sits inside one
+  // month, so a number carrying only 2026-08 made every order on every screen look
+  // like the same date — the month was the only date on the orders list, repeated
+  // down the page. Two digits for the year because the century is never in doubt
+  // and the number is already long enough to read at a glance.
+  const p2 = (v) => String(v).padStart(2, '0');
+  const ymd = `${p2(date.getFullYear() % 100)}-${p2(date.getMonth() + 1)}-${p2(date.getDate())}`;
+  return { num: `${hall}-${ymd}-${vc}-${String(n).padStart(3, '0')}`, seq: { ...seq, [key]: n } };
 }
 
 /**

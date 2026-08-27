@@ -61,13 +61,29 @@ test('poTotals sums multiple lines and rounds once', () => {
 test('PO numbering increments per hall+vendor and pads', () => {
   const d = new Date('2026-08-01T12:00:00');
   let r = nextPoNum({}, 'sc', 'bv', d);
-  assert.equal(r.num, 'SC-2026-08-BV-001');
+  assert.equal(r.num, 'SC-26-08-01-BV-001');
   r = nextPoNum(r.seq, 'sc', 'bv', d);
-  assert.equal(r.num, 'SC-2026-08-BV-002');
+  assert.equal(r.num, 'SC-26-08-01-BV-002');
   const r2 = nextPoNum(r.seq, 'rwc', 'bv', d);
-  assert.equal(r2.num, 'RWC-2026-08-BV-001');    // independent sequence
+  assert.equal(r2.num, 'RWC-26-08-01-BV-001');    // independent sequence
   const r3 = nextPoNum(r2.seq, 'sc', 'cbs', d);
-  assert.equal(r3.num, 'SC-2026-08-CBS-001');
+  assert.equal(r3.num, 'SC-26-08-01-CBS-001');
+});
+
+test('the PO number carries the day, and rolls without help', () => {
+  // The whole reason for the format: every order this system has ever made falls
+  // inside one month, so a number showing only the month made the orders list read
+  // as one repeated date. The day is what distinguishes them.
+  const on = (iso) => nextPoNum({ 'SC-BV': 9 }, 'sc', 'bv', new Date(iso + 'T12:00:00')).num;
+  assert.equal(on('2026-08-27'), 'SC-26-08-27-BV-010');
+  assert.equal(on('2026-09-01'), 'SC-26-09-01-BV-010', 'month rolls on its own');
+  assert.equal(on('2027-01-03'), 'SC-27-01-03-BV-010', 'and so does the year');
+  assert.equal(on('2026-10-05'), 'SC-26-10-05-BV-010', 'single digits stay padded');
+  // two orders to the same distributor on the same day must not collide
+  const first = nextPoNum({}, 'sc', 'bv', new Date('2026-08-27T09:00:00'));
+  const second = nextPoNum(first.seq, 'sc', 'bv', new Date('2026-08-27T17:00:00'));
+  assert.notEqual(first.num, second.num);
+  assert.equal(second.num, 'SC-26-08-27-BV-002');
 });
 
 const products = [
