@@ -1593,3 +1593,144 @@ test('the sort is stable enough to not reorder equal dates', () => {
   const b = { num: 'b', sent_at: '2026-08-10T00:00:00Z' };
   assert.deepEqual([a, b].sort(bySentDesc).map((p) => p.num), ['a', 'b']);
 });
+
+// ---------- settling a delivered order against what arrived ----------
+import { settleOrder } from '../src/lib/logic/settlement.js';
+
+// A Biker case: one PO line of 1 unit at $10,336, arriving as 8 totes at $1,292.
+// Comparing the ordered UNIT (1) against box rows (8) is the standing unit bug in
+// this codebase, so it is the shape every case below is built on.
+const bikerLine = {
+  id: 'l1', product_id: 'P163', name_snapshot: 'Biker - Strip',
+  qty: 1, cost: '10336.00', packing_each: '320.00', split_boxes: 8, taxable: true,
+};
+const boxesFor = (n, state = 'in_inventory', pid = 'P163') =>
+  Array.from({ length: n }, () => ({ product_id: pid, state }));
+
+test('a complete delivery owes the whole order and nothing is missing', () => {
+  const st = settleOrder({ lines: [bikerLine], boxes: boxesFor(8), taxRate: 0.0975 });
+  assert.equal(st.lines[0].orderedBoxes, 8, 'one ordered unit is eight boxes');
+  assert.equal(st.lines[0].arrivedBoxes, 8);
+  assert.equal(st.missing.total, 0);
+  assert.equal(st.arrived.total, st.ordered.total);
+  assert.equal(st.complete, true);
+});
+
+test('a short delivery splits the money without losing a cent', () => {
+  // 6 of 8 totes arrived; 1 still on order, 1 written off missing
+  const boxes = [...boxesFor(6), ...boxesFor(1, 'on_order'), ...boxesFor(1, 'missing')];
+  const st = settleOrder({ lines: [bikerLine], boxes, taxRate: 0.0975 });
+  assert.equal(st.lines[0].arrivedBoxes, 6);
+  assert.equal(st.lines[0].missingBoxes, 2);
+  assert.equal(st.complete, false);
+  assert.equal(st.shortLines, 1);
+  // the invariant that makes this safe to pay from: nothing evaporates
+  assert.equal(round2(st.arrived.total + st.missing.total), st.ordered.total);
+  // goods AND packing are both pro-rated — billing full collation on a short
+  // case is the exact bug receiving.js was written to stop
+  assert.equal(st.arrived.packing, 240);      // 6/8 of $320
+  assert.equal(st.missing.packing, 80);
+});
+
+test('opened and sold-out boxes still count as arrived', () => {
+  // stock that came in and was played is not missing — it is the most arrived a
+  // box can be, and counting only in_inventory would demand a credit for it
+  const boxes = [...boxesFor(3), ...boxesFor(3, 'opened'), ...boxesFor(2, 'sold_out')];
+  const st = settleOrder({ lines: [bikerLine], boxes, taxRate: 0.0975 });
+  assert.equal(st.lines[0].arrivedBoxes, 8);
+  assert.equal(st.missing.total, 0);
+});
+
+test('the invoice is compared against what arrived, not what was ordered', () => {
+  const boxes = [...boxesFor(6), ...boxesFor(2, 'on_order')];
+  const full = settleOrder({ lines: [bikerLine], boxes, taxRate: 0.0975, invoiced: 11663.76 });
+  assert.ok(full.overbilled > 0, 'billed for the full order but only 6 of 8 came');
+  assert.equal(full.overbilled, round2(11663.76 - full.arrived.total));
+  const fair = settleOrder({ lines: [bikerLine], boxes, taxRate: 0.0975,
+    invoiced: settleOrder({ lines: [bikerLine], boxes, taxRate: 0.0975 }).arrived.total });
+  assert.equal(fair.overbilled, 0, 'an invoice matching the delivery shows no gap');
+  assert.equal(settleOrder({ lines: [bikerLine], boxes }).overbilled, null,
+    'no invoice recorded means no comparison, not a zero');
+});
+
+test('a delivery charge has no stock and can never be short', () => {
+  const fee = { id: 'f1', product_id: null, kind: 'fee', name_snapshot: 'Delivery',
+    qty: 1, cost: '45.00', packing_each: 0, split_boxes: 1, taxable: false };
+  const st = settleOrder({ lines: [fee], boxes: [], taxRate: 0.0975 });
+  assert.equal(st.lines[0].isCharge, true);
+  assert.equal(st.lines[0].missingBoxes, 0, 'a charge cannot fail to turn up');
+  assert.equal(st.arrived.total, 45);
+  assert.equal(st.arrived.tax, 0, 'and an exempt line is not taxed');
+});
+
+test('an unpriced line is excluded from every total and reported', () => {
+  // the failure this prevents: an invoice that looks fully covered while one line
+  // is still "?", so the hall underpays and nobody notices
+  const tbd = { ...bikerLine, id: 'l2', price_tbd: true, cost: 0, packing_each: 0 };
+  const st = settleOrder({ lines: [bikerLine, tbd], boxes: boxesFor(16), taxRate: 0.0975 });
+  assert.equal(st.tbdLines, 1);
+  assert.equal(st.ordered.goods, 10336, 'only the priced line is counted');
+});
+
+test('tax follows the taxable goods that arrived, at the order\'s own rate', () => {
+  const exempt = { ...bikerLine, id: 'l3', product_id: 'S1', taxable: false,
+    qty: 1, cost: '100.00', packing_each: 0, split_boxes: 1 };
+  const boxes = [...boxesFor(8), ...boxesFor(1, 'in_inventory', 'S1')];
+  const st = settleOrder({ lines: [bikerLine, exempt], boxes, taxRate: 0.0975 });
+  assert.equal(st.arrived.taxable, 10336, 'the exempt line is outside the taxable base');
+  assert.equal(st.arrived.tax, round2(10336 * 0.0975));
+  assert.equal(st.arrived.goods, 10436);
+});
+
+test('more boxes than ordered never produce a negative shortfall', () => {
+  const st = settleOrder({ lines: [bikerLine], boxes: boxesFor(11), taxRate: 0.0975 });
+  assert.equal(st.lines[0].arrivedBoxes, 8, 'capped at what was ordered');
+  assert.equal(st.lines[0].missingBoxes, 0);
+  assert.equal(st.missing.total, 0);
+});
+
+test('settling an order with no lines is empty, not a crash', () => {
+  const st = settleOrder({});
+  assert.deepEqual(st.lines, []);
+  assert.equal(st.ordered.total, 0);
+  assert.equal(st.complete, true);
+});
+
+// ---------- renaming a game must never cost it a match ----------
+
+test('renaming a product keeps the old name as an alias', async () => {
+  // the exact case: a game reclassified from flash to strip and given a suffix.
+  // Session sheets still say "In Laws", and they have to go on matching.
+  const store = shortStore();
+  store.db.products.push({ id: 'P300', name: 'In Laws', type: 'flash', aliases: [] });
+  await store.updateProduct('P300', { name: 'In Laws - Strip', type: 'strip' });
+  const p = store.db.products.find((x) => x.id === 'P300');
+  assert.equal(p.name, 'In Laws - Strip', 'the rename happened');
+  assert.deepEqual(p.aliases, ['In Laws'], 'and the old spelling still matches');
+  assert.equal(p.type, 'strip', 'other fields update as normal');
+});
+
+test('renaming twice keeps every spelling the sheets might use', async () => {
+  const store = shortStore();
+  store.db.products.push({ id: 'P1x', name: 'First', aliases: [] });
+  await store.updateProduct('P1x', { name: 'Second' });
+  await store.updateProduct('P1x', { name: 'Third' });
+  assert.deepEqual(store.db.products.find((x) => x.id === 'P1x').aliases, ['First', 'Second']);
+});
+
+test('an update that is not a rename adds no alias', async () => {
+  const store = shortStore();
+  store.db.products.push({ id: 'P2x', name: 'Same', aliases: [] });
+  await store.updateProduct('P2x', { base_cost: 42 });
+  await store.updateProduct('P2x', { name: 'Same' });              // unchanged
+  await store.updateProduct('P2x', { name: '  Same  ' });          // whitespace only
+  assert.deepEqual(store.db.products.find((x) => x.id === 'P2x').aliases, []);
+});
+
+test('re-casing a name does not pile up near-duplicate aliases', async () => {
+  const store = shortStore();
+  store.db.products.push({ id: 'P3x', name: 'Biker Betty', aliases: ['biker betty'] });
+  await store.updateProduct('P3x', { name: 'Biker Betty - Strip' });
+  assert.deepEqual(store.db.products.find((x) => x.id === 'P3x').aliases, ['biker betty'],
+    'the old name was already covered case-insensitively');
+});

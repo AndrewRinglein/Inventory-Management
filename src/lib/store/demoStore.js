@@ -58,11 +58,23 @@ export class DemoStore {
   // ---- catalog ----
   async getVendors() { return [...this.db.vendors]; }
   async getProducts() { return [...this.db.products]; }
+  // mirrors SupabaseStore.updateProduct — a rename keeps the old name as an alias
+  // so hand-typed session sheets go on matching
   async updateProduct(id, fields) {
     const p = this.db.products.find((x) => x.id === id);
     if (!p) throw new Error('product not found');
-    Object.assign(p, fields);
-    this._event('update', 'products', id, { fields });
+    const patch = { ...fields };
+    if (patch.name != null) {
+      const old = (p.name || '').trim();
+      const next = String(patch.name).trim();
+      const key = (v) => v.trim().toLowerCase();
+      if (old && old !== next) {
+        const have = p.aliases || [];
+        if (!have.some((a) => key(a) === key(old))) patch.aliases = [...have, old];
+      }
+    }
+    Object.assign(p, patch);
+    this._event('update', 'products', id, { fields: patch });
     this._save();
     return { ...p };
   }

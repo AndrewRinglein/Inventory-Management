@@ -67,8 +67,33 @@ export class SupabaseStore {
   // ---- catalog ----
   async getVendors() { return ok(await this.sb.from('vendors').select('*').order('name')); }
   async getProducts() { return fetchAll(() => this.sb.from('products').select('*').order('name')); }
+  /**
+   * Update a product — and never let a rename cost us a match.
+   *
+   * Session sheets are typed by hand and say what they have always said. The
+   * matcher tries the name first, then the aliases, so renaming a game in the
+   * catalogue silently stops its sheet lines matching: every one drops into the
+   * unmatched pile for somebody to key in by hand, and nothing warns you. Renaming
+   * "In Laws" to "In Laws - Strip" is enough to do it.
+   *
+   * So the old name is kept as an alias automatically, every time. The rename is
+   * still a rename — screens, POs and emails all show the new name — but the old
+   * spelling goes on matching for as long as the sheets keep using it.
+   */
   async updateProduct(id, fields) {
-    return ok(await this.sb.from('products').update(fields).eq('id', id).select().single());
+    const patch = { ...fields };
+    if (patch.name != null) {
+      const cur = ok(await this.sb.from('products').select('name,aliases').eq('id', id).maybeSingle());
+      const old = (cur?.name || '').trim();
+      const next = String(patch.name).trim();
+      if (old && old !== next) {
+        const have = cur?.aliases || [];
+        // case-insensitive, so re-casing a name does not pile up near-duplicates
+        const key = (v) => v.trim().toLowerCase();
+        if (!have.some((a) => key(a) === key(old))) patch.aliases = [...have, old];
+      }
+    }
+    return ok(await this.sb.from('products').update(patch).eq('id', id).select().single());
   }
   async addProduct(p) {
     const row = { id: 'C' + Date.now(), ...p };
