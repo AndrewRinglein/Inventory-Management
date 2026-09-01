@@ -536,3 +536,112 @@ export function buildDeliveredEmail(po, vendor, hallName, invoiceNo, receivedLin
     amount: owed,
   };
 }
+
+/**
+ * The email that asks a distributor to put an invoice right.
+ *
+ * buildShortageEmail already reports one delivery that came up short. This is the
+ * money conversation that follows, and it can cover a single PO or every
+ * outstanding one for a distributor at once — chasing four invoices in four
+ * separate emails is how a credit gets lost.
+ *
+ * `orders` is [{ po, settlement }], the settlement coming from logic/settlement.js
+ * so the arithmetic on screen and the arithmetic in the email are the same code.
+ *
+ * Only orders with something to say are included: short, or billed for more than
+ * arrived. An order that came in complete and was billed correctly has no place
+ * in a chase email, and padding one with "everything was fine" lines makes the
+ * real problem harder to find.
+ */
+export function buildSettlementEmail(vendor, hallName, orders = [], sender = {}) {
+  // Anything with a money consequence in either direction: stock we paid for and
+  // did not get, stock we kept and were not billed for, or a bill that does not
+  // match the shelf.
+  const relevant = (orders || []).filter(({ settlement: s }) =>
+    s && (s.missing.total > 0.005 || s.extra.total > 0.005
+          || (s.overbilled != null && Math.abs(s.overbilled) > 0.005)));
+  if (!relevant.length) return null;
+
+  const shortValue = round2(relevant.reduce((a, o) => a + o.settlement.missing.total, 0));
+  const extraValue = round2(relevant.reduce((a, o) => a + o.settlement.extra.total, 0));
+  const credit = round2(relevant.reduce(
+    (a, o) => a + (o.settlement.overbilled > 0 ? o.settlement.overbilled : 0), 0));
+  const owe = round2(relevant.reduce(
+    (a, o) => a + (o.settlement.overbilled < 0 ? -o.settlement.overbilled : 0), 0));
+  const many = relevant.length > 1;
+  const anyTax = relevant.some(({ settlement: s }) => s.missing.tax > 0.005 || s.arrived.tax > 0.005);
+
+  const block = ({ po, settlement: s }) => {
+    const rows = s.lines.filter((l) => l.missingBoxes > 0).map((l) =>
+      `    ${String(l.missingBoxes).padStart(3)} x ${snapshotHead(l.name).padEnd(40)}`
+      + `${fmtMoney(l.missingValue + l.missingPacking).padStart(12)}`);
+    const spare = s.lines.filter((l) => l.extraBoxes > 0).map((l) =>
+      `    ${String(l.extraBoxes).padStart(3)} x ${snapshotHead(l.name).padEnd(40)}`
+      + `${fmtMoney(l.extraValue + l.extraPacking).padStart(12)}`
+      + (l.offOrder ? '   (not on the order)' : ''));
+
+    const out = [`  ${po.num}${po.vendor_ref ? ` (your ref ${po.vendor_ref})` : ''}`];
+    if (rows.length) out.push(`    short:`, ...rows);
+    if (spare.length) out.push(`    extra, which we are keeping:`, ...spare);
+    if (!rows.length && !spare.length) out.push(`    everything arrived as ordered`);
+    if (s.invoiced != null) {
+      // the figure the credit is derived from has to be the one printed, and that
+      // is everything on our shelf — the ordered part plus anything extra we kept
+      out.push(
+        `    ${'invoiced:'.padEnd(22)}${fmtMoney(s.invoiced).padStart(12)}`,
+        `    ${'we make it:'.padEnd(22)}${fmtMoney(s.owed.total).padStart(12)}`);
+      if (s.overbilled > 0.005) {
+        out.push(`    ${'credit requested:'.padEnd(22)}${fmtMoney(s.overbilled).padStart(12)}`);
+      } else if (s.overbilled < -0.005) {
+        out.push(`    ${'please add to invoice:'.padEnd(22)}${fmtMoney(-s.overbilled).padStart(12)}`);
+      }
+    }
+    return out.join('\n');
+  };
+
+  return {
+    kind: 'settlement',
+    po_num: many ? null : relevant[0].po.num,
+    to: vendor.email,
+    // name the direction in the subject; "correction" alone reads as a complaint
+    // even when we are the ones who owe money
+    subject: many
+      ? `Invoice corrections on ${relevant.length} orders — ${hallName}`
+      : `${credit > 0.005 && owe <= 0.005 ? 'Short delivery' : 'Invoice correction'}`
+        + ` on ${relevant[0].po.num} — ${hallName}`,
+    body: [
+      greet(vendor.contact_name),
+      ``,
+      many
+        ? `We've checked in ${relevant.length} recent deliveries and what arrived doesn't match what was invoiced. Here is what we received on each:`
+        : `We've checked in the delivery on ${relevant[0].po.num} and what arrived doesn't match the invoice. Here is what we received:`,
+      ``,
+      ...relevant.map(block),
+      ``,
+      ...(shortValue > 0.005
+        ? [`  ${'Total not received:'.padEnd(24)}${fmtMoney(shortValue).padStart(12)}`] : []),
+      ...(extraValue > 0.005
+        ? [`  ${'Total extra kept:'.padEnd(24)}${fmtMoney(extraValue).padStart(12)}`] : []),
+      ...(credit > 0.005
+        ? [`  ${'Total credit requested:'.padEnd(24)}${fmtMoney(credit).padStart(12)}`] : []),
+      ...(owe > 0.005
+        ? [`  ${'Total to add to invoice:'.padEnd(24)}${fmtMoney(owe).padStart(12)}`] : []),
+      // the per-line figures are goods and packing; the totals carry tax as well,
+      // and a vendor who spots the gap without being told will query the whole email
+      ...(anyTax
+        ? [``, `  Line figures are goods and packing. The invoiced, received and credit`,
+               `  totals include sales tax at the rate on the original order.`]
+        : []),
+      ``,
+      // ask for exactly what the numbers say, rather than a generic "please fix"
+      [
+        `We've recorded what physically arrived on our end.`,
+        credit > 0.005 && `Could you confirm whether the missing stock is coming as a backorder, or issue a credit so we can settle?`,
+        owe > 0.005 && `We're keeping the extra, so please add it to the ${many ? 'invoices' : 'invoice'} and we'll pay the difference.`,
+      ].filter(Boolean).join(' '),
+      ``,
+      `Happy to go through any of it line by line if that's easier.`,
+      ...signature(sender, hallName),
+    ].join('\n'),
+  };
+}

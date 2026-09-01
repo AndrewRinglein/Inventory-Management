@@ -139,6 +139,17 @@ export class DemoStore {
   }
   async getPos(hallId) { return this.db.purchase_orders.filter((p) => p.hall_id === hallId); }
   async getPoLines(poId) { return this.db.po_lines.filter((l) => l.po_id === poId); }
+
+  // mirrors SupabaseStore.getPoLinesFor — lines for several orders, grouped by po_id
+  async getPoLinesFor(poIds = []) {
+    const ids = [...new Set(poIds.filter(Boolean))];
+    const out = {};
+    for (const id of ids) out[id] = [];
+    for (const l of this.db.po_lines || []) {
+      if (out[l.po_id]) out[l.po_id].push(l);
+    }
+    return out;
+  }
   async setPoStatus(poId, status) {
     const po = this.db.purchase_orders.find((p) => p.id === poId);
     po.status = status;

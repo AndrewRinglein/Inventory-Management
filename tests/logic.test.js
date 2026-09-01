@@ -1613,6 +1613,7 @@ test('a complete delivery owes the whole order and nothing is missing', () => {
   assert.equal(st.lines[0].arrivedBoxes, 8);
   assert.equal(st.missing.total, 0);
   assert.equal(st.arrived.total, st.ordered.total);
+  assert.equal(st.owed.total, st.ordered.total);
   assert.equal(st.complete, true);
 });
 
@@ -1682,11 +1683,57 @@ test('tax follows the taxable goods that arrived, at the order\'s own rate', () 
   assert.equal(st.arrived.goods, 10436);
 });
 
-test('more boxes than ordered never produce a negative shortfall', () => {
+test('a delivery can be wrong in the other direction too', () => {
+  // they sent 11 totes against an order for 8, and the hall is keeping them.
+  // Capping at the ordered quantity hides that and understates what we owe.
   const st = settleOrder({ lines: [bikerLine], boxes: boxesFor(11), taxRate: 0.0975 });
-  assert.equal(st.lines[0].arrivedBoxes, 8, 'capped at what was ordered');
-  assert.equal(st.lines[0].missingBoxes, 0);
-  assert.equal(st.missing.total, 0);
+  assert.equal(st.lines[0].arrivedBoxes, 8, 'the ordered part is still the ordered part');
+  assert.equal(st.lines[0].extraBoxes, 3);
+  assert.equal(st.lines[0].missingBoxes, 0, 'nothing is short');
+  assert.ok(st.owed.total > st.ordered.total, 'we owe more than we ordered');
+  assert.ok(st.net > 0, 'net is positive: we are holding unbilled stock');
+});
+
+test('extra stock is billed as goods, not as more packing', () => {
+  // packing is charged once on the case that was ordered; three spare totes do
+  // not earn another three lots of collation
+  const st = settleOrder({ lines: [bikerLine], boxes: boxesFor(11), taxRate: 0.0975 });
+  assert.equal(st.extra.packing, 0);
+  assert.equal(st.extra.goods, round2(3 * st.lines[0].perBox));
+});
+
+test('stock delivered against an order but not on it still counts', () => {
+  // a substitution: Bingo Vision ran out and sent something else instead
+  const boxes = [...boxesFor(8), { product_id: 'P999', state: 'in_inventory', cost: '250.00' }];
+  const st = settleOrder({ lines: [bikerLine], boxes, taxRate: 0.0975 });
+  const off = st.lines.find((l) => l.offOrder);
+  assert.ok(off, 'the off-order product gets its own row');
+  assert.equal(off.extraBoxes, 1);
+  assert.equal(off.extraValue, 250, 'valued from the box, since there is no line');
+  assert.equal(off.orderedBoxes, 0);
+  assert.equal(st.extraLines, 1);
+});
+
+test('short and extra can happen on the same order and net out', () => {
+  const second = { ...bikerLine, id: 'l2', product_id: 'P200',
+    name_snapshot: 'Other', qty: 1, cost: '800.00', packing_each: '0', split_boxes: 4 };
+  const boxes = [
+    ...boxesFor(6),                                   // 6 of 8 — short 2
+    ...boxesFor(6, 'in_inventory', 'P200'),           // 6 of 4 — extra 2
+  ];
+  const st = settleOrder({ lines: [bikerLine, second], boxes, taxRate: 0.0975 });
+  assert.equal(st.shortLines, 1);
+  assert.equal(st.extraLines, 1);
+  assert.equal(st.net, round2(st.extra.total - st.missing.total));
+  // the invariant that keeps this honest: what we owe is what is on the shelf
+  assert.equal(st.owed.total, round2(st.arrived.total + st.extra.total));
+});
+
+test('an order that is exactly right is complete in both directions', () => {
+  const st = settleOrder({ lines: [bikerLine], boxes: boxesFor(8), taxRate: 0.0975 });
+  assert.equal(st.complete, true);
+  assert.equal(st.net, 0);
+  assert.equal(st.owed.total, st.ordered.total);
 });
 
 test('settling an order with no lines is empty, not a crash', () => {
@@ -1733,4 +1780,220 @@ test('re-casing a name does not pile up near-duplicate aliases', async () => {
   await store.updateProduct('P3x', { name: 'Biker Betty - Strip' });
   assert.deepEqual(store.db.products.find((x) => x.id === 'P3x').aliases, ['biker betty'],
     'the old name was already covered case-insensitively');
+});
+
+// ---------- a game keeps its identity through a rename ----------
+import { matchKey, keysFor, nameMatches, candidatesFor, searchMatches }
+  from '../src/lib/logic/naming.js';
+
+test('the type tag someone appends to a title does not change the game', () => {
+  // the live case: a flash game reclassified as a strip and tagged in its title
+  assert.equal(matchKey('In Laws - Strip'), matchKey('In Laws'));
+  assert.equal(matchKey('In Laws (Strip)'), matchKey('In Laws'));
+  assert.equal(matchKey('In Laws -strip'), matchKey('In Laws'));
+  assert.equal(matchKey('IN-LAWS - STRIP'), matchKey('in laws'));
+  // and the tier suffixes the distributor's own list carries
+  assert.equal(matchKey('In Laws 180x8'), matchKey('In Laws'));
+  assert.equal(matchKey('Golden Carrot 2600/$1'), matchKey('Golden Carrot'));
+});
+
+test('a sheet still matches a renamed game even with no alias recorded', () => {
+  // belt and braces: the database trigger keeps the old name, but a product
+  // loaded by any other route may have no alias at all, and the sheets do not
+  // know that. Normalising the suffix away covers it either way.
+  assert.equal(nameMatches({ name: 'Hot Mama - Strip' }, 'Hot Mama'), true);
+  assert.equal(nameMatches({ name: 'Hot Mama' }, 'Hot Mama - Strip'), true);
+});
+
+test('every name a product has held is a way to find it', () => {
+  const p = { name: 'In Laws - Strip', orig_name: 'In Laws 180x8', aliases: ['In Laws'] };
+  const k = keysFor(p);
+  assert.equal(k.size, 1, 'all three spellings collapse to one key');
+  for (const raw of ['In Laws', 'in laws', 'IN-LAWS', 'In Laws 180x8', 'In Laws (Strip)']) {
+    assert.equal(nameMatches(p, raw), true, raw);
+  }
+});
+
+test('normalising names does not merge games that are actually different', () => {
+  assert.notEqual(matchKey('Big Daddy'), matchKey('Big Pickle'));
+  assert.notEqual(matchKey('Monster'), matchKey('Monster Horse'));
+  assert.notEqual(matchKey('Biker Betty'), matchKey('Biker'));
+  // a name that is ONLY a type word must not collapse to nothing and swallow others
+  assert.notEqual(matchKey('Strip Daddy'), matchKey('Cat & Mouse'));
+  assert.equal(matchKey('Strip Daddy'), 'stripdaddy', 'a leading type word is not a suffix');
+});
+
+test('double-suffixing stays visible instead of being papered over', () => {
+  // only ONE trailing tag is removed, so a mistake shows up rather than hiding
+  assert.notEqual(matchKey('Biker - Strip - Strip'), matchKey('Biker'));
+});
+
+test('two products sharing a key are both returned, not silently picked', () => {
+  // Fire Balls genuinely exists twice; the caller has to resolve it, and a
+  // matcher that guesses is worse than one that asks
+  const products = [
+    { id: 'A', name: 'Fire Balls' },
+    { id: 'B', name: 'Fire Balls - Strip' },
+    { id: 'C', name: 'Something Else' },
+  ];
+  assert.deepEqual(candidatesFor(products, 'Fire Balls').map((p) => p.id), ['A', 'B']);
+});
+
+test('the picker finds a game by the name people still call it', () => {
+  const p = { name: 'In Laws - Strip', aliases: ['In Laws'] };
+  assert.equal(searchMatches(p, 'In Laws'), true, 'the old name');
+  assert.equal(searchMatches(p, 'strip'), true, 'the new name');
+  assert.equal(searchMatches(p, 'inlaws'), true, 'typed without the space');
+  assert.equal(searchMatches(p, ''), true, 'an empty search shows everything');
+  assert.equal(searchMatches(p, 'Monster'), false);
+});
+
+test('renaming through the store still records the old name', async () => {
+  // the store does this as well as the database trigger, because demo mode has
+  // no database and must behave identically
+  const store = shortStore();
+  store.db.products.push({ id: 'P9x', name: 'Was This', aliases: [] });
+  await store.updateProduct('P9x', { name: 'Now That - Strip', type: 'strip' });
+  const p = store.db.products.find((x) => x.id === 'P9x');
+  assert.deepEqual(p.aliases, ['Was This']);
+  assert.equal(nameMatches(p, 'Was This'), true);
+  assert.equal(nameMatches(p, 'Now That'), true);
+});
+
+// ---------- the email that asks a distributor to put an invoice right ----------
+import { buildSettlementEmail } from '../src/lib/logic/emails.js';
+
+const vendorBV = { id: 'bv', name: 'Bingo Vision', email: 'scott@bv.test', contact_name: 'Scott' };
+const poRef = (num) => ({ num, vendor_id: 'bv' });
+
+test('an order that arrived exactly right produces no chase email', () => {
+  const st = settleOrder({ lines: [bikerLine], boxes: boxesFor(8), taxRate: 0.0975,
+    invoiced: settleOrder({ lines: [bikerLine], boxes: boxesFor(8), taxRate: 0.0975 }).owed.total });
+  assert.equal(buildSettlementEmail(vendorBV, 'SC', [{ po: poRef('X'), settlement: st }]), null,
+    'nothing to say means no email, not an empty one');
+});
+
+test('a short delivery asks for a credit', () => {
+  const st = settleOrder({ lines: [bikerLine], boxes: boxesFor(6), taxRate: 0.0975, invoiced: 11663.76 });
+  const e = buildSettlementEmail(vendorBV, 'Santa Clara', [{ po: poRef('SC-1'), settlement: st }]);
+  assert.equal(e.to, 'scott@bv.test');
+  assert.match(e.subject, /Short delivery on SC-1/);
+  assert.match(e.body, /credit requested/);
+  assert.doesNotMatch(e.body, /add to invoice/, 'we are not offering to pay more');
+});
+
+test('extra stock we keep asks to be invoiced, not credited', () => {
+  const st = settleOrder({ lines: [bikerLine], boxes: boxesFor(11), taxRate: 0.0975, invoiced: 11663.76 });
+  const e = buildSettlementEmail(vendorBV, 'Santa Clara', [{ po: poRef('SC-2'), settlement: st }]);
+  assert.match(e.body, /extra, which we are keeping/);
+  assert.match(e.body, /please add to invoice/);
+  assert.match(e.body, /we'll pay the difference/);
+  assert.doesNotMatch(e.body, /credit requested/);
+});
+
+test('the email prints the figure the credit is actually derived from', () => {
+  // "we make it" must equal invoiced minus the credit, or the vendor cannot check it
+  const st = settleOrder({ lines: [bikerLine], boxes: boxesFor(6), taxRate: 0.0975, invoiced: 11663.76 });
+  const e = buildSettlementEmail(vendorBV, 'SC', [{ po: poRef('SC-3'), settlement: st }]);
+  assert.ok(e.body.includes(fmtMoney(st.owed.total)), 'the owed figure is printed');
+  assert.match(e.body, /we make it:/);
+  assert.equal(round2(st.invoiced - st.owed.total), st.overbilled);
+});
+
+test('one email can cover every outstanding order for a distributor', () => {
+  const shortSt = settleOrder({ lines: [bikerLine], boxes: boxesFor(6), taxRate: 0.0975, invoiced: 11663.76 });
+  const fineSt = settleOrder({ lines: [bikerLine], boxes: boxesFor(8), taxRate: 0.0975,
+    invoiced: settleOrder({ lines: [bikerLine], boxes: boxesFor(8), taxRate: 0.0975 }).owed.total });
+  const e = buildSettlementEmail(vendorBV, 'SC', [
+    { po: poRef('SC-A'), settlement: shortSt },
+    { po: poRef('SC-B'), settlement: fineSt },       // nothing wrong — must be left out
+    { po: poRef('SC-C'), settlement: shortSt },
+  ]);
+  assert.match(e.subject, /2 orders/, 'the clean order is not counted');
+  assert.match(e.body, /SC-A/);
+  assert.match(e.body, /SC-C/);
+  assert.doesNotMatch(e.body, /SC-B/, 'padding a chase email with fine orders hides the problem');
+});
+
+// ---------- the monthly summary at the bottom of Accounting ----------
+import { monthlyByVendor, monthsPresent, monthLabel, monthOf }
+  from '../src/lib/logic/settlement.js';
+
+const pay = (vendor_id, amount, status, created_at) => ({ vendor_id, amount, status, created_at });
+const stub = (short, extra = 0) => ({ missing: { total: short }, extra: { total: extra } });
+
+test('months are listed newest first, and only real ones', () => {
+  const ps = [pay('bv', '1', 'open', '2026-08-15T00:00:00Z'),
+              pay('bv', '1', 'open', '2026-09-01T00:00:00Z'),
+              pay('bv', '1', 'open', '2026-09-20T00:00:00Z'),
+              pay('bv', '1', 'open', null)];
+  assert.deepEqual(monthsPresent(ps), ['2026-09', '2026-08']);
+  assert.equal(monthOf(ps[3]), '');
+  assert.equal(monthLabel('2026-09'), 'September 2026');
+  assert.equal(monthLabel(''), 'All months');
+  assert.equal(monthLabel('nonsense'), 'All months');
+});
+
+test('due to pay counts open invoices only', () => {
+  // an invoice already settled is not due, and adding it back overstates what is
+  // leaving the hall this month
+  const ps = [pay('bv', '100.00', 'open', '2026-09-01T00:00:00Z'),
+              pay('bv', '50.00', 'paid', '2026-09-02T00:00:00Z')];
+  const { rows, total } = monthlyByVendor(ps, () => stub(0), '2026-09');
+  assert.equal(rows[0].due, 100);
+  assert.equal(rows[0].paid, 50);
+  assert.equal(total.due, 100, 'paid money is reported separately, never in due');
+});
+
+test('short is netted against extra, per distributor', () => {
+  const ps = [pay('bv', '100.00', 'open', '2026-09-01T00:00:00Z'),
+              pay('bv', '100.00', 'open', '2026-09-02T00:00:00Z')];
+  let n = 0;
+  const { rows } = monthlyByVendor(ps, () => (n++ === 0 ? stub(300, 0) : stub(0, 120)), '2026-09');
+  assert.equal(rows[0].short, 300);
+  assert.equal(rows[0].extra, 120);
+  assert.equal(rows[0].net, 180, 'one signed figure: they still owe us 180 of stock');
+});
+
+test('a distributor we owe stock to shows a negative net', () => {
+  const ps = [pay('md', '100.00', 'open', '2026-09-01T00:00:00Z')];
+  const { rows, total } = monthlyByVendor(ps, () => stub(0, 500), '2026-09');
+  assert.equal(rows[0].net, -500);
+  assert.equal(total.net, -500);
+});
+
+test('the month filter is real, and empty means every month', () => {
+  const ps = [pay('bv', '100.00', 'open', '2026-09-01T00:00:00Z'),
+              pay('bv', '900.00', 'open', '2026-08-01T00:00:00Z')];
+  assert.equal(monthlyByVendor(ps, () => stub(0), '2026-09').total.due, 100);
+  assert.equal(monthlyByVendor(ps, () => stub(0), '2026-08').total.due, 900);
+  assert.equal(monthlyByVendor(ps, () => stub(0), '').total.due, 1000);
+});
+
+test('an order with no settlement adds to the money but not to short', () => {
+  // the quiet failure this prevents: a total that looks complete while half the
+  // orders behind it were never checked
+  const ps = [pay('bv', '100.00', 'open', '2026-09-01T00:00:00Z'),
+              pay('bv', '200.00', 'open', '2026-09-02T00:00:00Z')];
+  let n = 0;
+  const r = monthlyByVendor(ps, () => (n++ === 0 ? stub(75) : null), '2026-09');
+  assert.equal(r.total.due, 300, 'the money is still counted');
+  assert.equal(r.total.short, 75, 'but only the checked order contributes short');
+  assert.equal(r.unsettled, 1);
+  assert.equal(r.rows[0].unsettled, 1, 'and it is attributed to the right distributor');
+});
+
+test('distributors are ranked by what they are owed', () => {
+  const ps = [pay('bv', '10.00', 'open', '2026-09-01T00:00:00Z'),
+              pay('md', '900.00', 'open', '2026-09-01T00:00:00Z'),
+              pay('pbf', '50.00', 'open', '2026-09-01T00:00:00Z')];
+  const { rows } = monthlyByVendor(ps, () => stub(0), '2026-09');
+  assert.deepEqual(rows.map((r) => r.vendorId), ['md', 'pbf', 'bv']);
+});
+
+test('a month with no payments summarises to nothing, not a crash', () => {
+  const r = monthlyByVendor([], () => null, '2026-01');
+  assert.deepEqual(r.rows, []);
+  assert.equal(r.total.due, 0);
+  assert.equal(r.total.net, 0);
 });

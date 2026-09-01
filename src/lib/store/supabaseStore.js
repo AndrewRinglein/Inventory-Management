@@ -165,6 +165,26 @@ export class SupabaseStore {
   }
   async getPos(hallId) { return fetchAll(() => this.sb.from('purchase_orders').select('*').eq('hall_id', hallId).order('created_at', { ascending: false })); }
   async getPoLines(poId) { return fetchAll(() => this.sb.from('po_lines').select('*').eq('po_id', poId)); }
+
+  /**
+   * Lines for several orders at once, grouped by po_id.
+   *
+   * Accounting needs "ordered" and "short" on EVERY row, not just an expanded
+   * one, so fetching per order would be a request per line of the table. Chunked
+   * because a URL carrying every id has a length limit and PostgREST caps a page
+   * at 1000 rows.
+   */
+  async getPoLinesFor(poIds = []) {
+    const ids = [...new Set(poIds.filter(Boolean))];
+    const out = {};
+    for (let i = 0; i < ids.length; i += 100) {
+      const rows = await fetchAll(() => this.sb.from('po_lines').select('*')
+        .in('po_id', ids.slice(i, i + 100)));
+      for (const l of rows) (out[l.po_id] ||= []).push(l);
+    }
+    for (const id of ids) out[id] ||= [];      // an order with no lines is empty, not absent
+    return out;
+  }
   async setPoStatus(poId, status) { ok(await this.sb.from('purchase_orders').update({ status }).eq('id', poId)); }
 
   /** Write re-quoted lines and totals back onto an existing PO, keeping its number. */

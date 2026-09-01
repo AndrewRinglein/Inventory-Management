@@ -251,6 +251,15 @@ export default function Receiving() {
       setToast(`Enter the invoice price for ${missingPrices.length} item${missingPrices.length === 1 ? '' : 's'} first — it's marked "?" on the order.`, null, 6000);
       return;
     }
+    // The invoice number is what ties a delivery to the paper the distributor
+    // sends and to the payment Accounting will chase. It was optional, and so it
+    // was skipped every time: every payment on the books reads "—" in the invoice
+    // column, which makes a credit impossible to reference and a bill impossible
+    // to find. Required from here.
+    if (!invoiceNo.trim()) {
+      setToast('Enter the vendor invoice number before confirming — Accounting needs it to reference this delivery.', null, 6000);
+      return;
+    }
     setBusy(true);
     try {
       // the "?" lines are answered by the invoice: put the price on the catalog first,
@@ -272,7 +281,7 @@ export default function Receiving() {
       const paths = [];
       for (const p of pages) paths.push(await store.uploadInvoicePhoto(p));
       const shipment = await store.createShipment({
-        po_id: cur.id, invoice_no: invoiceNo, notes: '',
+        po_id: cur.id, invoice_no: invoiceNo.trim(), notes: '',
         invoice_photo_path: paths[0] || null, invoice_photo_paths: paths,
       });
 
@@ -319,7 +328,7 @@ export default function Receiving() {
         receivedLines.push(row);
       }
       await store.confirmShipment(shipment.id, {
-        invoice_no: invoiceNo,
+        invoice_no: invoiceNo.trim(),
         boxes: receivedLines.reduce((a, l) => a + l.qty, 0),
         missing: missingLines.reduce((a, l) => a + l.qty, 0),
       });
@@ -336,7 +345,7 @@ export default function Receiving() {
       emails.push(delivered);
       await store.addPayment({
         hall_id: hall, vendor_id: cur.vendor_id, po_num: cur.num,
-        invoice_no: invoiceNo, amount: delivered.amount,
+        invoice_no: invoiceNo.trim(), amount: delivered.amount,
       });
       await reloadHall();
       await reloadCatalog();
@@ -454,8 +463,13 @@ export default function Receiving() {
       </div>
       <div className="card pad" style={{ marginBottom: 14 }}>
         <div style={{ display: 'flex', gap: 14, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          <div className="field" style={{ margin: 0 }}><label>Vendor invoice #</label>
-            <input type="text" value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} style={{ width: 160 }} /></div>
+          <div className="field" style={{ margin: 0 }}>
+            <label>Vendor invoice # <span style={{ color: 'var(--orange)' }}>*</span></label>
+            <input type="text" value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)}
+              className={invoiceNo.trim() ? '' : 'needs-update'}
+              placeholder="from the paper"
+              title="Required. Accounting quotes this when chasing a credit or matching a bill."
+              style={{ width: 160 }} /></div>
           <div className="field" style={{ margin: 0 }}><label>Invoice pages — add as many as the invoice has</label>
             <input type="file" accept="image/*" capture="environment" multiple
               onChange={(e) => { setPages((p) => [...p, ...Array.from(e.target.files || [])]); e.target.value = ''; }} /></div>

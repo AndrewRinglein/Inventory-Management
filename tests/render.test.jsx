@@ -293,4 +293,33 @@ console.log('');
   }
 }
 
-process.exit(failed + layoutFailed + hideFailed + appFailed + orderFailed ? 1 : 0);
+// --------------------------------------------------- Accounting columns
+//
+// Two money columns were inserted in front of "Amount to pay", into a table whose
+// header row and body cells are written in separate places. That is the same
+// off-by-one the Purchase/Inventory check exists for: nothing crashes, every
+// number simply prints one column left of its heading.
+
+const acctPayment = {
+  id: 'pay1', hall_id: 'sc', vendor_id: 'bv', po_num: 'SC-2026-08-BV-001',
+  invoice_no: 'INV-001', amount: '109.75', status: 'open',
+  created_at: '2026-08-02T00:00:00Z',
+};
+
+let acctFailed = 0;
+console.log('');
+{
+  const c = { ...ctx, payments: [acctPayment] };
+  const html = renderToString(<AppCtx.Provider value={c}><Accounting /></AppCtx.Provider>);
+  const th = headersOf(html);
+  const nTd = firstRowCells(html);
+  const lead = ['PO #', 'Vendor', 'Invoice #', 'Created', 'Delivery',
+                'Amount ordered', 'Amount short', 'Amount to pay'];
+  const ok = lead.every((want, i) => (th[i] || '').startsWith(want));
+  if (ok) console.log(`  ok    Accounting shows ordered and short before amount to pay`);
+  else { acctFailed++; console.log(`  FAIL  Accounting columns: got ${th.slice(0, lead.length).join(' | ')}`); }
+  if (nTd && nTd === th.length) console.log(`  ok    Accounting header and cells line up (${nTd} columns)`);
+  else { acctFailed++; console.log(`  FAIL  Accounting: ${th.length} headers but ${nTd} cells`); }
+}
+
+process.exit(failed + layoutFailed + hideFailed + appFailed + orderFailed + acctFailed ? 1 : 0);

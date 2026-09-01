@@ -1,6 +1,7 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
 import { isHidden, hiddenLast } from '../lib/logic/hidden.js';
+import { searchMatches } from '../lib/logic/naming.js';
 import { countByProduct } from '../lib/logic/boxes.js';
 import { stockUnit } from '../lib/logic/pricing.js';
 
@@ -334,7 +335,7 @@ export default function SessionUse() {
         // keys it by hand instead.
         const matches = products
           .filter((p) => p.active !== false && p.type === 'flash')
-          .filter((p) => !term || p.name.toLowerCase().includes(term))
+          .filter((p) => searchMatches(p, term))
           .sort((a, b) => hiddenLast(a, b, hidden) || a.name.localeCompare(b.name));
         const list = matches.slice(0, 60);
         const clipped = matches.length - list.length;
