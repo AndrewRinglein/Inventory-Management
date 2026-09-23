@@ -17,7 +17,7 @@
 
 import fs from 'node:fs';
 
-const FILE = new URL('../src/components/Receiving.jsx', import.meta.url).pathname;
+const FILE = new URL('../src/components/Receiving.jsx', import.meta.url);
 const ALLOWED = ['receivedLine(', 'missingLine(', 'extraLine('];
 
 const src = fs.readFileSync(FILE, 'utf8');

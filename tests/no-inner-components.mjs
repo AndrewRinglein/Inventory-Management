@@ -16,8 +16,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const DIR = new URL('../src/components/', import.meta.url).pathname;
+const DIR = fileURLToPath(new URL('../src/components/', import.meta.url));
 const FIELD = /<(input|select|textarea)\b/;
 
 // a component declaration indented inside another function body

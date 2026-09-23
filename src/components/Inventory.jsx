@@ -9,6 +9,7 @@ import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.j
 import { needsCost, needsType, needsTickets, needsVendor } from '../lib/logic/setup.js';
 import { priceParts, perBoxValue, stockUnit, unitLabel } from '../lib/logic/pricing.js';
 import UpdateGame from './UpdateGame.jsx';
+import { ProductGroupingToggle, GroupedProductRows } from './ProductGrouping.jsx';
 import { isFloor } from '../lib/logic/location.js';
 import { splitVisible, hiddenStockSummary, hiddenNote, isHidden } from '../lib/logic/hidden.js';
 
@@ -29,6 +30,7 @@ export default function Inventory() {
           hidden, toggleHidden } = useContext(AppCtx);
   const editable = can('boxes');
   const [q, setQ] = useState('');
+  const [groupByType, setGroupByType] = useState(false);
   const [typeF, setTypeF] = useState('');
   const [miscF, setMiscF] = useState('games');
   const [sortKey, setSortKey] = useState('name');
@@ -121,10 +123,11 @@ export default function Inventory() {
     [rows, hidden]);
 
   const sortBy = (k) => {
+    setGroupByType(false);
     if (k === sortKey) setDir(-dir);
     else { setSortKey(k); setDir(1); }
   };
-  const arrow = (k) => (k === sortKey ? (dir > 0 ? ' ▲' : ' ▼') : '');
+  const arrow = (k) => (!groupByType && k === sortKey ? (dir > 0 ? ' ▲' : ' ▼') : '');
 
   const openOne = async (row) => {
     // an off-site box cannot be opened on a floor it is not on
@@ -206,6 +209,7 @@ export default function Inventory() {
       {showAdjust && <Adjust onClose={() => setShowAdjust(false)} />}
       <div className="page-head">
         <div className="h1">Inventory — {hall === 'sc' ? 'Santa Clara' : 'Redwood City'}</div>
+        <ProductGroupingToggle checked={groupByType} onChange={setGroupByType} />
         <select value={typeF} onChange={(e) => setTypeF(e.target.value)} title="Game type">
           {GAME_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
         </select>
@@ -270,7 +274,7 @@ export default function Inventory() {
             <th className="last" style={{ width: 200 }} />
           </tr></thead>
           <tbody>
-            {shown.map((r) => (
+            <GroupedProductRows items={shown} enabled={groupByType} columns={13} getProduct={(r) => r.p}>{(r) => (
               <tr key={r.p.id} style={isHidden(hidden, r.p.id) ? { opacity: 0.55 } : undefined}>
                 <td className="first">
                   {r.p.name}
@@ -339,7 +343,7 @@ export default function Inventory() {
                   </>) : <span className="dimmer" style={{ fontSize: 11 }}>read-only</span>}
                 </td>
               </tr>
-            ))}
+            )}</GroupedProductRows>
           </tbody>
         </table>
         {shown.length === 0 && <div style={{ padding: 30, textAlign: 'center' }} className="dimmer">No products match.</div>}

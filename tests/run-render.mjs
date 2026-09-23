@@ -5,6 +5,8 @@
 // modules load; nothing under test depends on their values.
 import { build } from 'esbuild';
 import { pathToFileURL } from 'node:url';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const store = new Map();
 globalThis.localStorage = {
@@ -23,9 +25,10 @@ globalThis.document = {
 };
 globalThis.performance ??= { now: () => 0 };
 
-const out = '/tmp/render-test.cjs';
+const controls = process.argv.includes('--controls');
+const out = join(tmpdir(), `inventory-${controls ? 'controls' : 'render'}-test-${process.pid}.cjs`);
 await build({
-  entryPoints: ['tests/render.test.jsx'],
+  entryPoints: [controls ? 'tests/catalog-controls.test.jsx' : 'tests/render.test.jsx'],
   bundle: true,
   format: 'cjs',
   platform: 'node',

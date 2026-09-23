@@ -8,6 +8,7 @@ import { GAME_TYPES, MISC_MODES, passesFilters } from '../lib/logic/categories.j
 import { needsCost, needsType, needsTickets, needsVendor } from '../lib/logic/setup.js';
 import { isHidden } from '../lib/logic/hidden.js';
 import UpdateGame from './UpdateGame.jsx';
+import { ProductGroupingToggle, GroupedProductRows } from './ProductGrouping.jsx';
 
 const TIX_FILTERS = [
   ['', 'All'], ['lt1000', '< 1,000'], ['1to2k', '1,000–1,999'],
@@ -52,6 +53,7 @@ export default function Purchase() {
   const editable = can('order');
   const [vendorF, setVendorF] = useState('');
   const [q, setQ] = useState('');
+  const [groupByType, setGroupByType] = useState(false);
   const [typeF, setTypeF] = useState('');
   const [miscF, setMiscF] = useState('games');
   const [tixF, setTixF] = useState('');
@@ -107,8 +109,8 @@ export default function Purchase() {
   const hiddenHere = products.filter((p) => p.active !== false
     && isHidden(hidden, p.id) && !(orderQty[p.id] || 0)).length;
 
-  const sortBy = (k) => { if (k === sortKey) setDir(-dir); else { setSortKey(k); setDir(1); } };
-  const arrow = (k) => (k === sortKey ? (dir > 0 ? ' ▲' : ' ▼') : '');
+  const sortBy = (k) => { setGroupByType(false); if (k === sortKey) setDir(-dir); else { setSortKey(k); setDir(1); } };
+  const arrow = (k) => (!groupByType && k === sortKey ? (dir > 0 ? ' ▲' : ' ▼') : '');
   const anyFilter = !!(vendorF || typeF || tixF || priceF || stockF || q || miscF !== 'games');
   const clearFilters = () => {
     setVendorF(''); setTypeF(''); setTixF(''); setPriceF(''); setStockF(''); setQ(''); setMiscF('games');
@@ -170,6 +172,7 @@ export default function Purchase() {
         </div>
       )}
       <div className="filter-bar">
+        <ProductGroupingToggle checked={groupByType} onChange={setGroupByType} />
         <input type="text" placeholder="Search game…" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 190 }} />
         <label>Vendor
           <select value={vendorF} onChange={(e) => setVendorF(e.target.value)}>
@@ -271,7 +274,7 @@ export default function Purchase() {
             <th className="last" style={{ width: 62 }} />
           </tr></thead>
           <tbody>
-            {rows.map((p) => {
+            <GroupedProductRows items={rows} enabled={groupByType} columns={14}>{(p) => {
               const n = orderQty[p.id] || 0;
               const c = cnt[p.id] || {};
               const pp = priceParts(p, vmap[p.vendor_id]);
@@ -325,6 +328,7 @@ export default function Purchase() {
                   </td>
                   <td className="r mono dimmer">{c.onorder || 0}</td>
                   <td className="last r" style={{ whiteSpace: 'nowrap' }}>
+                    {can('editCatalog') && <button className="btn ghost sm" onClick={() => setUpdPid(p.id)}>Edit</button>}
                     {editable && (isHidden(hidden, p.id)
                       ? <button className="btn ghost sm" title="Order this game at this hall again"
                           onClick={() => setHidden(p, false)}>Unhide</button>
@@ -334,11 +338,14 @@ export default function Purchase() {
                   </td>
                 </tr>
               );
-            })}
+            }}</GroupedProductRows>
           </tbody>
         </table>
         {rows.length === 0 && <div style={{ padding: 30, textAlign: 'center' }} className="dimmer">No games match.</div>}
       </div>
+      {updPid && products.find((p) => p.id === updPid) && (
+        <UpdateGame key={updPid} product={products.find((p) => p.id === updPid)} onClose={() => setUpdPid(null)} />
+      )}
     </div>
   );
 }

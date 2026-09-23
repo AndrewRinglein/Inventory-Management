@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import { VARIETY_PACKS } from '../src/data/variety-packs.js';
 
-const SQL = new URL('../supabase/migrations/043_marathon_daubers.sql', import.meta.url).pathname;
+const SQL = new URL('../supabase/migrations/043_marathon_daubers.sql', import.meta.url);
 const sql = fs.readFileSync(SQL, 'utf8');
 
 let bad = 0, checked = 0;

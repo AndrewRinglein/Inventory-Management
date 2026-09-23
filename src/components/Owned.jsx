@@ -1,5 +1,6 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { AppCtx } from '../App.jsx';
+import { ProductGroupingToggle, GroupedProductRows } from './ProductGrouping.jsx';
 import { fmtMoney } from '../lib/logic/po.js';
 import { perBoxValue } from '../lib/logic/pricing.js';
 import { countByProduct } from '../lib/logic/boxes.js';
@@ -34,6 +35,7 @@ export default function Owned() {
   // off-site stock through the UI but only create it with hand-written SQL.
   const [send, setSend] = useState(null);      // {productId, to, ref, qty}
   const [pick, setPick] = useState('');
+  const [groupByType, setGroupByType] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -135,6 +137,7 @@ export default function Owned() {
     <div>
       <div className="page-head">
         <div className="h1">Owned inventory — {HALLS[hall]}</div>
+        <ProductGroupingToggle checked={groupByType} onChange={setGroupByType} />
         <div className="grow" />
         {can('boxes') && (
           <button className="btn sm ghost" style={{ marginRight: 10 }}
@@ -202,7 +205,7 @@ export default function Owned() {
             <th className="r last" style={{ width: 110 }}>Value</th>
           </tr></thead>
           <tbody>
-            {owned.map((r) => (
+            <GroupedProductRows items={owned} enabled={groupByType} columns={6} getProduct={(r) => r.p}>{(r) => (
               <tr key={r.p.id}>
                 <td className="first">{r.p.name}</td>
                 <td className="r mono">{r.floor || <span className="dimmer">—</span>}</td>
@@ -214,7 +217,7 @@ export default function Owned() {
                 <td className="r mono dimmer">{r.onorder || '—'}</td>
                 <td className="r mono last">{fmtMoney(r.value)}</td>
               </tr>
-            ))}
+            )}</GroupedProductRows>
           </tbody>
         </table>
         {!owned.length && <div style={{ padding: 30, textAlign: 'center' }} className="dimmer">Nothing in stock.</div>}

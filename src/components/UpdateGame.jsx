@@ -3,7 +3,7 @@ import { AppCtx } from '../App.jsx';
 import { REAL_TYPES, isMisc, isGrabBag } from '../lib/logic/categories.js';
 import { needsCost, needsType, needsTickets, needsAnyUpdate } from '../lib/logic/setup.js';
 import { ticketPrice, fmtMoney } from '../lib/logic/po.js';
-import { priceParts, baseCost, packUnits, splitBoxes } from '../lib/logic/pricing.js';
+import { priceParts, baseCost, packUnits, splitBoxes, packingFor, round2 } from '../lib/logic/pricing.js';
 import AskDistributor from './AskDistributor.jsx';
 
 /**
@@ -87,10 +87,13 @@ export default function UpdateGame({ product, onClose }) {
 
   const costWasSet = !needsCost(product);
   const vendorName = vendors.find((v) => v.id === product.vendor_id)?.name || '';
-  // only worth showing where the distributor actually charges packing
-  const packFee = Number(vendors.find((v) => v.id === f.vendor_id)?.packing_fee) || 0;
-  // what the box will actually be charged at once this form is saved
-  const effPackRate = f.packing_rate.trim() === '' ? packFee : (parseFloat(f.packing_rate) || 0);
+  const selectedVendor = vendors.find((v) => v.id === f.vendor_id);
+  const packFee = Number(selectedVendor?.packing_fee) || 0;
+  const packingUnits = Number(f.packing_units);
+  const packingRate = f.packing_rate.trim() === '' ? null : round2(Number(f.packing_rate));
+  const packingValid = f.packing_units.trim() !== '' && Number.isSafeInteger(packingUnits) && packingUnits >= 0
+    && (packingRate === null || (Number.isFinite(packingRate) && Number(f.packing_rate) >= 0));
+  const packingPreview = { packing_units: packingUnits, packing_rate: packingRate };
   // a mixed pack or a cherry case has no single ticket count to ask for
   const wantsTickets = f.type === 'flash' && !isMisc(product) && !isGrabBag(product);
 
@@ -128,11 +131,11 @@ export default function UpdateGame({ product, onClose }) {
       out.price_per_ticket = parseFloat(f.price_per_ticket) || 1;
     }
     if (admin && f.active !== (product.active !== false)) out.active = f.active;
-    const pu = Math.max(0, parseInt(f.packing_units) || 0);
+    const pu = packingUnits;
     if (admin && pu !== (Number(product.packing_units) || 0)) out.packing_units = pu;
     // '' clears the override back to the distributor's rate; 0 pins it to free
     if (admin && f.stock_unit && f.stock_unit !== product.stock_unit) out.stock_unit = f.stock_unit;
-    const pr = f.packing_rate.trim() === '' ? null : Math.max(0, parseFloat(f.packing_rate) || 0);
+    const pr = packingRate;
     const wasPr = product.packing_rate == null || product.packing_rate === ''
       ? null : Number(product.packing_rate);
     if (admin && pr !== wasPr) out.packing_rate = pr;
@@ -142,15 +145,19 @@ export default function UpdateGame({ product, onClose }) {
   const save = async () => {
     if (saving) return;
     if (admin && !f.name.trim()) { setToast('A game needs a name'); return; }
+    if (admin && !packingValid) {
+      setToast('Enter a whole number of packing units (0 or more) and a packing fee of 0 or more, or leave the fee blank for the distributor default.');
+      return;
+    }
     const fields = changed();
     if (!Object.keys(fields).length) { onClose(); return; }
 
-    // repricing something that already had a price, or moving the $/ticket, is PIN-gated
-    const touchesMoney = ('cost' in fields && costWasSet) || 'price_per_ticket' in fields;
-    if (touchesMoney && !(await requirePin())) return;
-
+    // Custom packing changes future order totals, just like other price changes.
+    const touchesMoney = ('base_cost' in fields && costWasSet) || 'price_per_ticket' in fields
+      || 'packing_rate' in fields || 'packing_units' in fields || 'pack_units' in fields;
     setSaving(true);
     try {
+      if (touchesMoney && !(await requirePin())) return;
       await store.updateProduct(product.id, fields);
       await reloadCatalog();
       await reloadHall?.();
@@ -214,8 +221,8 @@ export default function UpdateGame({ product, onClose }) {
           )}
         </div>
 
-        <div style={{ display: 'flex', gap: 12 }}>
-          <div className="field" style={{ flex: 1 }}><label>Base cost $ (one unit)</label>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0 12px' }}>
+          <div className="field"><label>Base cost $ (one unit)</label>
             <input className="num" type="number" min="0" step="0.01" value={f.cost} placeholder="0.00"
               autoFocus={needsCost(product) && !needsType(product)}
               onChange={(e) => set('cost', e.target.value)}
@@ -223,47 +230,53 @@ export default function UpdateGame({ product, onClose }) {
             {costWasSet && <div className="dimmer" style={{ fontSize: 11, marginTop: 3 }}>Changing this asks for the PIN</div>}
           </div>
           {admin && (
-            <div className="field" style={{ width: 92 }}><label>Units / box</label>
+            <div className="field"><label>Units / box</label>
               <input className="num" type="number" min="1" value={f.pack_units}
                 onChange={(e) => set('pack_units', e.target.value)} style={{ width: '100%', fontSize: 16 }} /></div>
           )}
           {admin && (
-            <div className="field" style={{ width: 108 }}><label>Boxes per order</label>
+            <div className="field"><label>Boxes per order</label>
               <input className="num" type="number" min="1" value={f.split_boxes}
                 title="One ordered unit arrives as this many boxes on the shelf. 1 for almost everything."
                 onChange={(e) => set('split_boxes', e.target.value)} style={{ width: '100%', fontSize: 16 }} /></div>
           )}
           {wantsTickets && (
-            <div className="field" style={{ flex: 1 }}><label>Tickets per box</label>
+            <div className="field"><label>Tickets per box</label>
               <input className="num" type="number" min="0" value={f.tickets} placeholder="e.g. 1440"
                 onChange={(e) => set('tickets', e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && save()} style={{ width: '100%', fontSize: 16 }} /></div>
           )}
-          <div className="field" style={{ width: 110 }}><label>$ / ticket{!admin && <Locked />}</label>
+          <div className="field"><label>$ / ticket{!admin && <Locked />}</label>
             <select value={f.price_per_ticket} disabled={!admin}
               onChange={(e) => set('price_per_ticket', e.target.value)} style={{ width: '100%' }}>
               <option value="1">$1</option><option value="2">$2</option>
             </select></div>
         </div>
 
-        {admin && packFee > 0 && (
-          <div className="field"><label>Packing / collation</label>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <input className="num" type="number" min="0" value={f.packing_units}
-                onChange={(e) => set('packing_units', e.target.value)} style={{ width: 90 }} />
-              <span className="dimmer" style={{ fontSize: 11.5 }}>units per box &nbsp;×&nbsp;</span>
-              <input className="num" type="number" min="0" step="0.01" value={f.packing_rate}
-                placeholder={String(packFee)} onChange={(e) => set('packing_rate', e.target.value)}
-                style={{ width: 90 }} />
-              <span className="dimmer" style={{ fontSize: 11.5 }}>
-                per unit — adds <b>{fmtMoney(effPackRate * (parseInt(f.packing_units) || 0))}</b> to this box.
-              </span>
+        {admin && (
+          <div className="field">
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>Packing / collation</div>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ flex: 1 }}>
+                <label htmlFor="packing-units">Packing units per ordered item</label>
+                <input id="packing-units" className="num" type="number" min="0" step="1" value={f.packing_units}
+                  onChange={(e) => set('packing_units', e.target.value)} style={{ width: '100%' }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label htmlFor="packing-rate">Custom packing fee ($)</label>
+                <input id="packing-rate" className="num" type="number" min="0" step="0.01" value={f.packing_rate}
+                  placeholder={String(packFee)} onChange={(e) => set('packing_rate', e.target.value)}
+                  style={{ width: '100%' }} />
+              </div>
             </div>
+            {packingValid && <div style={{ fontSize: 12, marginTop: 8 }}>
+              Packing per ordered item: <b>{fmtMoney(packingFor(packingPreview, selectedVendor))}</b>
+            </div>}
             <div className="dimmer" style={{ fontSize: 11, marginTop: 4 }}>
-              Flash is 1 unit, an ordinary strip is 0, a 10-pack case is 80. Leave the rate blank to use{' '}
-              {vendorName}'s {fmtMoney(packFee)}; Bingo Vision bills {fmtMoney(4)} a box to pack flash but only{' '}
-              {fmtMoney(2)} a deal to collate strips, so the tote products override it.
-              {' '}Packing is not taxed.
+              The fee is charged per packing unit. For a flat fee per ordered item, set packing units to 1. Leave the fee blank to use{' '}
+              {selectedVendor?.name || 'the distributor'}'s default ({fmtMoney(packFee)} per packing unit).
+              {' '}Enter 0 for free packing. This fee is saved on the item and automatically used on future orders.
+              {' '}Changing it asks for the PIN. Packing is not taxed.
             </div>
           </div>
         )}
@@ -275,15 +288,13 @@ export default function UpdateGame({ product, onClose }) {
           </label>
         )}
 
-        {(parseFloat(f.cost) > 0) && (() => {
+        {(parseFloat(f.cost) > 0 && packingValid) && (() => {
           const pp = priceParts({ ...product, base_cost: parseFloat(f.cost) || 0, pack_units: parseInt(f.pack_units) || 1,
-                                  packing_units: parseInt(f.packing_units) || 0,
-                                  packing_rate: f.packing_rate.trim() === '' ? null : parseFloat(f.packing_rate) || 0 },
-                                vendors.find((v) => v.id === f.vendor_id));
+                                  type: f.type, split_boxes: parseInt(f.split_boxes) || 1, ...packingPreview }, selectedVendor);
           return (
             <div className="card pad" style={{ marginTop: 4, marginBottom: 4, background: 'var(--bg)' }}>
               <div className="mono" style={{ fontSize: 13 }}>
-                {fmtMoney(pp.base)} × {pp.units} = <b>{fmtMoney(pp.box)}</b> per box
+                {fmtMoney(pp.base)} × {pp.units} = <b>{fmtMoney(pp.box)}</b> per ordered item
                 {pp.packing > 0 && <> + {fmtMoney(pp.packing)} packing = <b>{fmtMoney(pp.allIn)}</b></>}
                 {pp.splits && <div style={{ marginTop: 3 }}>
                   arrives as <b>{pp.split} boxes</b> at <b>{fmtMoney(pp.perBox)}</b> each

@@ -6,6 +6,7 @@ import { ticketPrice, fmtMoney } from '../lib/logic/po.js';
 import { priceParts } from '../lib/logic/pricing.js';
 import AskDistributor from './AskDistributor.jsx';
 import UpdateGame from './UpdateGame.jsx';
+import { ProductGroupingToggle, GroupedProductRows } from './ProductGrouping.jsx';
 
 const TIX_FILTERS = [
   ['', 'All'], ['lt1000', 'Under 1,000'], ['1to2k', '1,000 – 1,999'],
@@ -19,6 +20,7 @@ export default function Games() {
   const { products, vendors, store, reloadCatalog, setToast, requirePin, can } = useContext(AppCtx);
   const editable = can('editCatalog');   // super admin only, by decision
   const [q, setQ] = useState('');
+  const [groupByType, setGroupByType] = useState(false);
   const [vendorF, setVendorF] = useState('');
   const [tixF, setTixF] = useState('');
   const [priceF, setPriceF] = useState('');
@@ -79,6 +81,7 @@ export default function Games() {
       {editPid && <UpdateGame product={products.find((p) => p.id === editPid)} onClose={() => setEditPid(null)} />}
       <div className="page-head">
         <div className="h1">{editable ? 'Add / Update Games' : 'Game Catalog'}</div>
+        <ProductGroupingToggle checked={groupByType} onChange={setGroupByType} />
         {!editable && <span className="badge b-gray">read-only — catalog edits are Super Admin only</span>}
         <div className="grow" />
         {can('send') && (
@@ -170,7 +173,7 @@ export default function Games() {
             <th className="last" style={{ width: 60 }} />
           </tr></thead>
           <tbody>
-            {rows.map((p) => (
+            <GroupedProductRows items={rows} enabled={groupByType} columns={showOrig ? 12 : 11}>{(p) => (
               <tr key={p.id}>
                 <td className="first">
                   <input className="cell" disabled={!editable} defaultValue={p.name} key={p.id + p.name}
@@ -233,7 +236,7 @@ export default function Games() {
                     : (p.id.startsWith('C') && <span className="badge b-green">new</span>)}
                 </td>
               </tr>
-            ))}
+            )}</GroupedProductRows>
           </tbody>
         </table>
         {rows.length === 0 && <div style={{ padding: 30, textAlign: 'center' }} className="dimmer">No games match.</div>}
