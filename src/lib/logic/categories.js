@@ -27,9 +27,12 @@ export const MISC_MODES = [
   { value: 'misc', label: 'Cherry & daubers only' },
 ];
 
-// "Cheery- Thrilling 3's/Bank Busters" is a cherry case with a typo in the
-// count sheet it came from — match the misspelling too rather than rename it.
-const CHERRY = /ch(err|eer)y/i;
+// Match cherry-ticket cases, not flash games that happen to have "Cherry" in
+// their name (for example, Cherry Dash Dollar Dash).
+const CHERRY_CASE = /\bch(?:err|eer)y\s+(?:t(?:icket|icekt)s?|bells)\b/i;
+// Older count sheets omitted "ticket" from these case names and sometimes
+// misspelled "cherry". Keep recognizing those specific legacy descriptions.
+const LEGACY_CHERRY_CASE = /^ch(?:err|eer)y\s*[-–—]\s*(?:jammin|thrilling\s+3|6\s+slot\s+shot|stone\s+cold\s+sapphires)\b/i;
 
 // A mixed pack — whatever the vendor had spare that week. There is no single
 // ticket count to record, so the app shouldn't keep asking for one. These are
@@ -42,7 +45,8 @@ export const isGrabBag = (p) => !!p && GRAB_BAG.test(p.name || '');
 /** Daubers and other supplies, plus cherry-ticket cases. */
 export function isMisc(p) {
   if (!p) return false;
-  return p.type === 'supply' || CHERRY.test(p.name || '');
+  const name = p.name || '';
+  return p.type === 'supply' || CHERRY_CASE.test(name) || LEGACY_CHERRY_CASE.test(name);
 }
 
 /** Does this product pass the type + misc filters? */
